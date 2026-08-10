@@ -237,14 +237,16 @@ FString APyPawn::CallPythonPawnMethodString(FString method_name)
 
 APyPawn::~APyPawn()
 {
-	FScopePythonGIL gil;
-
-#
+	if (Py_IsInitialized())
+	{
+		FScopePythonGIL gil;
 #if defined(UEPY_MEMORY_DEBUG)
-	UE_LOG(LogPython, Warning, TEXT("Python APawn (mapped to %p) wrapper XDECREF'ed"), py_uobject ? py_uobject->py_proxy : nullptr);
+		UE_LOG(LogPython, Warning, TEXT("Python APawn (mapped to %p) wrapper XDECREF'ed"), py_uobject ? py_uobject->py_proxy : nullptr);
 #endif
 
-	// this could trigger the distruction of the python/uobject mapper
-	Py_XDECREF(py_uobject);
+		// This could trigger destruction of the Python/UObject mapper.
+		Py_XDECREF(py_uobject);
+	}
+	py_uobject = nullptr;
 	FUnrealEnginePythonHouseKeeper::Get()->UnregisterPyUObject(this);
 }

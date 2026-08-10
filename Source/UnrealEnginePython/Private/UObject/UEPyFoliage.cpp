@@ -2,6 +2,7 @@
 
 #include "Runtime/Foliage/Public/FoliageType.h"
 #include "Runtime/Foliage/Public/InstancedFoliageActor.h"
+#include "Engine/Level.h"
 #include "Wrappers/UEPyFFoliageInstance.h"
 
 PyObject *py_ue_get_instanced_foliage_actor_for_current_level(ue_PyUObject *self, PyObject * args)
@@ -37,8 +38,8 @@ PyObject *py_ue_get_foliage_types(ue_PyUObject *self, PyObject * args)
 	PyObject *py_list = PyList_New(0);
 
 	TArray<UFoliageType *> FoliageTypes;
-#if ENGINE_MINOR_VERSION >=23
-	foliage_actor->FoliageInfos.GetKeys(FoliageTypes);
+#if UEP_LEGACY_ENGINE_MINOR_VERSION >=23
+	foliage_actor->GetFoliageInfos().GetKeys(FoliageTypes);
 #else
 	foliage_actor->FoliageMeshes.GetKeys(FoliageTypes);
 #endif
@@ -71,8 +72,8 @@ PyObject *py_ue_get_foliage_instances(ue_PyUObject *self, PyObject * args)
 	if (!foliage_type)
 		return PyErr_Format(PyExc_Exception, "argument is not a UFoliageType");
 
-#if ENGINE_MINOR_VERSION >= 23
-	if (!foliage_actor->FoliageInfos.Contains(foliage_type))
+#if UEP_LEGACY_ENGINE_MINOR_VERSION >= 23
+	if (!foliage_actor->GetFoliageInfos().Contains(foliage_type))
 #else
 	if (!foliage_actor->FoliageMeshes.Contains(foliage_type))
 #endif
@@ -80,8 +81,11 @@ PyObject *py_ue_get_foliage_instances(ue_PyUObject *self, PyObject * args)
 		return PyErr_Format(PyExc_Exception, "specified UFoliageType not found in AInstancedFoliageActor");
 	}
 
-#if ENGINE_MINOR_VERSION >= 23
-	FFoliageInfo& info = foliage_actor->FoliageInfos[foliage_type].Get();
+#if UEP_LEGACY_ENGINE_MINOR_VERSION >= 23
+	const TUniqueObj<FFoliageInfo> *info_ptr = foliage_actor->GetFoliageInfos().Find(foliage_type);
+	if (!info_ptr)
+		return PyErr_Format(PyExc_Exception, "specified UFoliageType not found in AInstancedFoliageActor");
+	const FFoliageInfo& info = info_ptr->Get();
 #else
 	FFoliageMeshInfo& info = foliage_actor->FoliageMeshes[foliage_type].Get();
 #endif
@@ -90,7 +94,9 @@ PyObject *py_ue_get_foliage_instances(ue_PyUObject *self, PyObject * args)
 
 	for (int32 i=0; i<info.Instances.Num(); i++)
 	{
-		PyList_Append(py_list, py_ue_new_ffoliage_instance(foliage_actor, foliage_type, i));
+		PyObject *py_instance = py_ue_new_ffoliage_instance(foliage_actor, foliage_type, i);
+		PyList_Append(py_list, py_instance);
+		Py_DECREF(py_instance);
 	}
 
 	return py_list;
@@ -122,7 +128,7 @@ PyObject *py_ue_add_foliage_asset(ue_PyUObject *self, PyObject * args)
 	AInstancedFoliageActor *ifa = AInstancedFoliageActor::GetInstancedFoliageActorForCurrentLevel(world, true);
 	if (u_object->IsA<UStaticMesh>())
 	{
-#if ENGINE_MINOR_VERSION >= 23
+#if UEP_LEGACY_ENGINE_MINOR_VERSION >= 23
 		foliage_type = ifa->GetLocalFoliageTypeForSource(u_object);
 #else
 		foliage_type = ifa->GetLocalFoliageTypeForMesh((UStaticMesh *)u_object);

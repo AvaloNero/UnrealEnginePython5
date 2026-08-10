@@ -4,7 +4,7 @@
 
 #include "UEPyModule.h"
 
-#if ENGINE_MINOR_VERSION < 18
+#if UEP_LEGACY_ENGINE_MINOR_VERSION < 18
 #include "Runtime/CoreUObject/Public/Misc/StringAssetReference.h"
 #endif
 

@@ -4,6 +4,7 @@
 #include "EditorStyleSet.h"
 #include "SlateCore.h"
 #include "Runtime/SlateCore/Public/Styling/SlateStyle.h"
+#include "Fonts/CompositeFont.h"
 #include "Runtime/Projects/Public/Interfaces/IPluginManager.h"
 
 
@@ -12,8 +13,6 @@ TSharedPtr< FSlateStyleSet > FPythonEditorStyle::StyleSet = nullptr;
 #define IMAGE_BRUSH( RelativePath, ... ) FSlateImageBrush( StyleSet->RootToContentDir( RelativePath, TEXT(".png") ), __VA_ARGS__ )
 #define BOX_BRUSH( RelativePath, ... ) FSlateBoxBrush( StyleSet->RootToContentDir( RelativePath, TEXT(".png") ), __VA_ARGS__ )
 #define BORDER_BRUSH( RelativePath, ... ) FSlateBorderBrush( StyleSet->RootToContentDir( RelativePath, TEXT(".png") ), __VA_ARGS__ )
-#define TTF_FONT( RelativePath, ... ) FSlateFontInfo( StyleSet->RootToContentDir( RelativePath, TEXT(".ttf") ), __VA_ARGS__ )
-#define OTF_FONT( RelativePath, ... ) FSlateFontInfo( StyleSet->RootToContentDir( RelativePath, TEXT(".otf") ), __VA_ARGS__ )
 
 // Const icon sizes
 static const FVector2D Icon8x8(8.0f, 8.0f);
@@ -68,7 +67,12 @@ void FPythonEditorStyle::Initialize()
 		StyleSet->Set("PythonEditor.PEP8ize.Small", new IMAGE_BRUSH("UI/Excute_x40", Icon16x16));
 	}
 
-	const FSlateFontInfo Consolas10 = TTF_FONT("Font/DroidSansMono", 9);
+	const TSharedRef<const FCompositeFont> PythonEditorFont = MakeShared<FStandaloneCompositeFont>(
+		NAME_None,
+		StyleSet->RootToContentDir(TEXT("Font/DroidSansMono"), TEXT(".ttf")),
+		EFontHinting::Default,
+		EFontLoadingPolicy::LazyLoad);
+	const FSlateFontInfo Consolas10(PythonEditorFont, 9.0f);
 
 	const FTextBlockStyle NormalText = FTextBlockStyle()
 		.SetFont(Consolas10)
@@ -119,8 +123,6 @@ void FPythonEditorStyle::Initialize()
 #undef IMAGE_BRUSH
 #undef BOX_BRUSH
 #undef BORDER_BRUSH
-#undef TTF_FONT
-#undef OTF_FONT
 
 void FPythonEditorStyle::Shutdown()
 {

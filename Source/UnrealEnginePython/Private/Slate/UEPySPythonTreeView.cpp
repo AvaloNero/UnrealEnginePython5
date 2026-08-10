@@ -20,7 +20,7 @@ static PyObject *py_ue_spython_tree_view_set_item_expansion(ue_PySPythonTreeView
 
 void SPythonTreeView::SetPythonItemExpansion(PyObject *item, bool InShouldExpandItem)
 {
-	for (TSharedPtr<struct FPythonItem> PythonItem : *ItemsSource)
+	for (const TSharedPtr<struct FPythonItem>& PythonItem : GetRootItems())
 	{
 		if (PythonItem->py_object == item)
 		{
@@ -85,29 +85,36 @@ static int ue_py_spython_tree_view_init(ue_PySPythonTreeView *self, PyObject *ar
 		return -1;
 	}
 
-	TArray<TSharedPtr<FPythonItem>> *items = new TArray<TSharedPtr<FPythonItem>>();
+	TUniquePtr<TArray<TSharedPtr<FPythonItem>>> items = MakeUnique<TArray<TSharedPtr<FPythonItem>>>();
 	while (PyObject *item = PyIter_Next(values))
 	{
-		Py_INCREF(item);
 		items->Add(TSharedPtr<FPythonItem>(new FPythonItem(item)));
 	}
 	Py_DECREF(values);
+	if (PyErr_Occurred())
+	{
+		return -1;
+	}
 
-	arguments.TreeItemsSource(items);
+	arguments.TreeItemsSource(items.Get());
 
 	ue_py_slate_farguments_optional_enum("allow_overscroll", AllowOverscroll, EAllowOverscroll);
 	ue_py_slate_farguments_optional_bool("clear_selection_on_click", ClearSelectionOnClick);
 	ue_py_slate_farguments_optional_enum("consume_mouse_wheel", ConsumeMouseWheel, EConsumeMouseWheel);
+#if UEP_LEGACY_ENGINE_MINOR_VERSION < 58
 	ue_py_slate_farguments_float("item_height", ItemHeight);
+#endif
 	ue_py_slate_farguments_event("on_generate_row", OnGenerateRow, TSlateDelegates<TSharedPtr<FPythonItem>>::FOnGenerateRow, GenerateRow);
 	ue_py_slate_farguments_event("on_selection_changed", OnSelectionChanged, TSlateDelegates<TSharedPtr<FPythonItem>>::FOnSelectionChanged, OnSelectionChanged);
 	ue_py_slate_farguments_enum("selection_mode", SelectionMode, ESelectionMode::Type);
-#if ENGINE_MINOR_VERSION > 12
+#if UEP_LEGACY_ENGINE_MINOR_VERSION > 12
 	ue_py_slate_farguments_optional_float("wheel_scroll_multiplier", WheelScrollMultiplier);
 #endif
 	ue_py_slate_farguments_event("on_get_children", OnGetChildren, TSlateDelegates<TSharedPtr<FPythonItem>>::FOnGetChildren, GetChildren);
 
 	ue_py_snew(SPythonTreeView);
+	ue_py_slate_cast(SPythonTreeView);
+	py_SPythonTreeView->SetPythonItemsSource(items.Release());
 	return 0;
 }
 

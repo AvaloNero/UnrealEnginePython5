@@ -15,22 +15,15 @@
 #include "UObject/ScriptMacros.h"
 #include "Runtime/Launch/Resources/Version.h"
 
-#if PLATFORM_MAC
-#include <Headers/Python.h>
-#include <Headers/structmember.h>
-#elif PLATFORM_LINUX
+#if WITH_PYTHON
+THIRD_PARTY_INCLUDES_START
+PRAGMA_DISABLE_REGISTER_WARNINGS
 #include <Python.h>
 #include <structmember.h>
-#elif PLATFORM_ANDROID
-#include <Python.h>
-#include <structmember.h>
-#elif PLATFORM_WINDOWS
-#include <include/pyconfig.h>
-#ifndef SIZEOF_PID_T
-#define SIZEOF_PID_T 4
-#endif
-#include <include/Python.h>
-#include <include/structmember.h>
+PRAGMA_ENABLE_REGISTER_WARNINGS
+THIRD_PARTY_INCLUDES_END
+#else
+#error UnrealEnginePython requires Target.bCompilePython and the UE Python3 SDK
 #endif
 
 typedef struct
@@ -51,7 +44,7 @@ typedef struct
 UNREALENGINEPYTHON_API void ue_py_register_magic_module(char *name, PyObject *(*)());
 UNREALENGINEPYTHON_API PyObject *ue_py_register_module(const char *);
 
-#if ENGINE_MINOR_VERSION >= 18
+#if UEP_LEGACY_ENGINE_MINOR_VERSION >= 18
 #define FStringAssetReference FSoftObjectPath
 #endif
 
@@ -86,7 +79,7 @@ UNREALENGINEPYTHON_API ue_PyUObject *ue_get_python_uobject_inc(UObject *);
 		return PyErr_Format(PyExc_Exception, "uobject is in invalid state");\
 	return (PyObject *)ret;
 
-#if ENGINE_MINOR_VERSION < 16
+#if UEP_LEGACY_ENGINE_MINOR_VERSION < 16
 template<class CPPSTRUCT>
 struct TStructOpsTypeTraitsBase2 : TStructOpsTypeTraitsBase
 {
@@ -104,6 +97,9 @@ public:
 	virtual void StartupModule() override;
 	virtual void ShutdownModule() override;
 
+	void InitializePython();
+	bool IsPythonInitialized() const { return bPythonInitialized; }
+
 	void RunString(char *);
 	void RunFile(char *);
 
@@ -119,12 +115,15 @@ public:
 	FString AdditionalModulesPath;
 
 	bool BrutalFinalize;
+	bool OwnsPythonInterpreter;
 
 	// pep8ize a string using various strategy (currently only autopep8 is supported)
 	FString Pep8ize(FString Code);
 
 private:
-	void *ue_python_gil;
+	PyThreadState *PythonMainThreadState;
+	FDelegateHandle AllModuleLoadingPhasesCompleteHandle;
+	bool bPythonInitialized;
 	// used by console
 	void *main_dict;
 	void *local_dict;

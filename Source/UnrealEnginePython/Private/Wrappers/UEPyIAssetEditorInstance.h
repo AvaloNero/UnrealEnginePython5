@@ -3,7 +3,7 @@
 
 #if WITH_EDITOR
 
-#include "Editor/UnrealEd/Public/Toolkits/AssetEditorManager.h"
+#include "Subsystems/AssetEditorSubsystem.h"
 
 struct ue_PyIAssetEditorInstance
 {

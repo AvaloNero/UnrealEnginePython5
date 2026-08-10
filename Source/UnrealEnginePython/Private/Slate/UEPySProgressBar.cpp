@@ -60,7 +60,9 @@ static int ue_py_sprogress_bar_init(ue_PySProgressBar *self, PyObject *args, PyO
 	ue_py_slate_farguments_optional_struct_ptr("fill_image", FillImage, FSlateBrush);
 	ue_py_slate_farguments_optional_struct_ptr("marquee_image", MarqueeImage, FSlateBrush);
 	ue_py_slate_farguments_tfloat("percent", Percent);
+#if UEP_LEGACY_ENGINE_MINOR_VERSION < 58
 	ue_py_slate_farguments_optional_float("refresh_rate", RefreshRate);
+#endif
 	ue_py_slate_farguments_optional_struct_ptr("style", Style, FProgressBarStyle);
 
 	ue_py_snew(SProgressBar);

@@ -4,6 +4,7 @@
 #include "Runtime/Engine/Classes/Engine/Texture.h"
 #include "Engine/TextureRenderTarget2D.h"
 #include "Engine/Texture2D.h"
+#include "TextureResource.h"
 
 PyObject *py_ue_texture_update_resource(ue_PyUObject *self, PyObject * args)
 {
@@ -74,12 +75,15 @@ PyObject *py_ue_texture_get_data(ue_PyUObject *self, PyObject * args)
 	if (!tex)
 		return PyErr_Format(PyExc_Exception, "object is not a Texture2D");
 
-	if (mipmap >= tex->GetNumMips())
+	FTexturePlatformData *platform_data = tex->GetPlatformData();
+	if (!platform_data || !platform_data->Mips.IsValidIndex(mipmap))
 		return PyErr_Format(PyExc_Exception, "invalid mipmap id");
 
-	const char *blob = (const char*)tex->PlatformData->Mips[mipmap].BulkData.Lock(LOCK_READ_ONLY);
-	PyObject *bytes = PyByteArray_FromStringAndSize(blob, (Py_ssize_t)tex->PlatformData->Mips[mipmap].BulkData.GetBulkDataSize());
-	tex->PlatformData->Mips[mipmap].BulkData.Unlock();
+	FTexture2DMipMap& mip = platform_data->Mips[mipmap];
+	const int64 data_size = mip.BulkData.GetBulkDataSize();
+	const char *blob = static_cast<const char *>(mip.BulkData.Lock(LOCK_READ_ONLY));
+	PyObject *bytes = PyByteArray_FromStringAndSize(blob, static_cast<Py_ssize_t>(data_size));
+	mip.BulkData.Unlock();
 	return bytes;
 }
 
@@ -149,7 +153,7 @@ PyObject *py_ue_texture_set_source_data(ue_PyUObject *self, PyObject * args)
 	// avoid making mess
 	if (wanted_len > len)
 	{
-		UE_LOG(LogPython, Warning, TEXT("truncating buffer to %d bytes"), len);
+		UE_LOG(LogPython, Warning, TEXT("truncating buffer to %lld bytes"), static_cast<long long>(len));
 		wanted_len = len;
 	}
 
@@ -189,7 +193,7 @@ PyObject *py_ue_render_target_get_data(ue_PyUObject *self, PyObject * args)
 		return PyErr_Format(PyExc_Exception, "object is not a TextureRenderTarget");
 
 
-	FTextureRenderTarget2DResource *resource = (FTextureRenderTarget2DResource *)tex->Resource;
+	FTextureRenderTargetResource *resource = tex->GameThread_GetRenderTargetResource();
 	if (!resource)
 	{
 		return PyErr_Format(PyExc_Exception, "cannot get render target resource");
@@ -218,7 +222,7 @@ PyObject *py_ue_render_target_get_data_to_buffer(ue_PyUObject *self, PyObject * 
 	Py_buffer py_buf;
 	int mipmap = 0;
 
-	if (!PyArg_ParseTuple(args, "z*|i:render_target_get_data_to_buffer", &py_buf, &mipmap))
+	if (!PyArg_ParseTuple(args, "w*|i:render_target_get_data_to_buffer", &py_buf, &mipmap))
 	{
 		return NULL;
 	}
@@ -230,18 +234,11 @@ PyObject *py_ue_render_target_get_data_to_buffer(ue_PyUObject *self, PyObject * 
 		return PyErr_Format(PyExc_Exception, "object is not a TextureRenderTarget");
 	}
 
-	FTextureRenderTarget2DResource *resource = (FTextureRenderTarget2DResource *)tex->Resource;
+	FTextureRenderTargetResource *resource = tex->GameThread_GetRenderTargetResource();
 	if (!resource)
 	{
 		PyBuffer_Release(&py_buf);
 		return PyErr_Format(PyExc_Exception, "cannot get render target resource");
-	}
-
-	Py_ssize_t data_len = (Py_ssize_t)(tex->GetSurfaceWidth() * 4 * tex->GetSurfaceHeight());
-	if (py_buf.len < data_len)
-	{
-		PyBuffer_Release(&py_buf);
-		return PyErr_Format(PyExc_Exception, "buffer is not big enough");
 	}
 
 	TArray<FColor> pixels;
@@ -249,6 +246,13 @@ PyObject *py_ue_render_target_get_data_to_buffer(ue_PyUObject *self, PyObject * 
 	{
 		PyBuffer_Release(&py_buf);
 		return PyErr_Format(PyExc_Exception, "unable to read pixels");
+	}
+
+	const Py_ssize_t data_len = static_cast<Py_ssize_t>(pixels.Num() * sizeof(FColor));
+	if (py_buf.len < data_len)
+	{
+		PyBuffer_Release(&py_buf);
+		return PyErr_Format(PyExc_Exception, "buffer is not big enough");
 	}
 
 	FMemory::Memcpy(py_buf.buf, pixels.GetData(), data_len);
@@ -264,7 +268,7 @@ PyObject *py_ue_texture_set_data(ue_PyUObject *self, PyObject * args)
 	Py_buffer py_buf;
 	int mipmap = 0;
 
-	if (!PyArg_ParseTuple(args, "z*|i:texture_set_data", &py_buf, &mipmap))
+	if (!PyArg_ParseTuple(args, "y*|i:texture_set_data", &py_buf, &mipmap))
 	{
 		return NULL;
 	}
@@ -283,26 +287,33 @@ PyObject *py_ue_texture_set_data(ue_PyUObject *self, PyObject * args)
 		return PyErr_Format(PyExc_Exception, "invalid data");
 	}
 
-	if (mipmap >= tex->GetNumMips())
+	FTexturePlatformData *platform_data = tex->GetPlatformData();
+	if (!platform_data || !platform_data->Mips.IsValidIndex(mipmap))
 	{
 		PyBuffer_Release(&py_buf);
 		return PyErr_Format(PyExc_Exception, "invalid mipmap id");
 	}
 
-	char *blob = (char*)tex->PlatformData->Mips[mipmap].BulkData.Lock(LOCK_READ_WRITE);
-	int32 len = tex->PlatformData->Mips[mipmap].BulkData.GetBulkDataSize();
-	int32 wanted_len = py_buf.len;
+	FTexture2DMipMap& mip = platform_data->Mips[mipmap];
+	char *blob = static_cast<char *>(mip.BulkData.Lock(LOCK_READ_WRITE));
+	const int64 len = mip.BulkData.GetBulkDataSize();
+	Py_ssize_t wanted_len = py_buf.len;
 	// avoid making mess
 	if (wanted_len > len)
 	{
-		UE_LOG(LogPython, Warning, TEXT("truncating buffer to %d bytes"), len);
+		UE_LOG(LogPython, Warning, TEXT("truncating buffer to %lld bytes"), static_cast<long long>(len));
 		wanted_len = len;
+	}
+	if (!blob && wanted_len > 0)
+	{
+		mip.BulkData.Unlock();
+		PyBuffer_Release(&py_buf);
+		return PyErr_Format(PyExc_Exception, "unable to lock texture mip data");
 	}
 	FMemory::Memcpy(blob, py_buf.buf, wanted_len);
 
+	mip.BulkData.Unlock();
 	PyBuffer_Release(&py_buf);
-
-	tex->PlatformData->Mips[mipmap].BulkData.Unlock();
 
 	Py_BEGIN_ALLOW_THREADS;
 	tex->MarkPackageDirty();
@@ -326,28 +337,33 @@ PyObject *py_unreal_engine_compress_image_array(PyObject * self, PyObject * args
 		return NULL;
 	}
 
-	if (py_buf.buf == nullptr || py_buf.len <= 0)
+	const int64 expected_len = static_cast<int64>(width) * static_cast<int64>(height) * 4;
+	if (width <= 0 || height <= 0 || py_buf.buf == nullptr ||
+		expected_len > MAX_int32 || py_buf.len != expected_len)
 	{
 		PyBuffer_Release(&py_buf);
-		return PyErr_Format(PyExc_Exception, "invalid image data");
+		return PyErr_Format(PyExc_ValueError,
+			"image data must contain exactly width * height * 4 bytes");
 	}
 
 	TArray<FColor> colors;
 	uint8 *buf = (uint8 *)py_buf.buf;
-	for (int32 i = 0; i < py_buf.len; i += 4)
+	for (Py_ssize_t i = 0; i < py_buf.len; i += 4)
 	{
-		colors.Add(FColor(buf[i], buf[1 + 1], buf[i + 2], buf[i + 3]));
+		colors.Add(FColor(buf[i], buf[i + 1], buf[i + 2], buf[i + 3]));
 	}
 
 	PyBuffer_Release(&py_buf);
 
-	TArray<uint8> output;
+	TArray64<uint8> output;
 
 	Py_BEGIN_ALLOW_THREADS;
-	FImageUtils::CompressImageArray(width, height, colors, output);
+	FImageUtils::PNGCompressImageArray(width, height, colors, output);
 	Py_END_ALLOW_THREADS;
 
-	return PyBytes_FromStringAndSize((char *)output.GetData(), output.Num());
+	return PyBytes_FromStringAndSize(
+		reinterpret_cast<const char *>(output.GetData()),
+		static_cast<Py_ssize_t>(output.Num()));
 }
 
 PyObject *py_unreal_engine_create_checkerboard_texture(PyObject * self, PyObject * args)

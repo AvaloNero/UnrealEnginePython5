@@ -285,16 +285,18 @@ FString APyActor::CallPythonActorMethodString(FString method_name, FString args)
 
 APyActor::~APyActor()
 {
-	FScopePythonGIL gil;
-
-	Py_XDECREF(py_actor_instance);
+	if (Py_IsInitialized())
+	{
+		FScopePythonGIL gil;
+		Py_XDECREF(py_actor_instance);
 
 #if defined(UEPY_MEMORY_DEBUG)
-	UE_LOG(LogPython, Warning, TEXT("Python AActor %p (mapped to %p) wrapper XDECREF'ed"), this, py_uobject ? py_uobject->py_proxy : nullptr);
+		UE_LOG(LogPython, Warning, TEXT("Python AActor %p (mapped to %p) wrapper XDECREF'ed"), this, py_uobject ? py_uobject->py_proxy : nullptr);
 #endif
 
-	Py_XDECREF(py_uobject);
+		Py_XDECREF(py_uobject);
+	}
+	py_actor_instance = nullptr;
+	py_uobject = nullptr;
 	FUnrealEnginePythonHouseKeeper::Get()->UnregisterPyUObject(this);
-
-
 }

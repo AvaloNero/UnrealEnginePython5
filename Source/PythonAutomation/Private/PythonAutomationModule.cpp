@@ -9,6 +9,14 @@ IMPLEMENT_MODULE(FPythonAutomationModule, PythonAutomation);
 
 void FPythonAutomationModule::StartupModule()
 {
+	FUnrealEnginePythonModule& PythonModule = FModuleManager::GetModuleChecked<FUnrealEnginePythonModule>("UnrealEnginePython");
+	PythonModule.InitializePython();
+	if (!PythonModule.IsPythonInitialized())
+	{
+		UE_LOG(LogTemp, Error, TEXT("PythonAutomation could not initialize because the UnrealEnginePython VM is unavailable"));
+		return;
+	}
+
 	FScopePythonGIL gil;
 	PyObject *py_automation_module = ue_py_register_module("unreal_engine.automation");
 	ue_python_init_fautomation_editor_common_utils(py_automation_module);

@@ -1,6 +1,6 @@
 #include "UEPyFbxProperty.h"
 
-#if ENGINE_MINOR_VERSION > 12
+#if UEP_LEGACY_ENGINE_MINOR_VERSION > 12
 #if WITH_EDITOR
 
 #include "UEPyFbx.h"

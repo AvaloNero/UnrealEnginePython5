@@ -62,10 +62,10 @@ PyObject *py_ue_vlog_cylinder(ue_PyUObject *self, PyObject * args)
 #if ENABLE_VISUAL_LOG
 	if (FVisualLogger::IsRecording())
 	{
-		FVisualLogger::GeometryShapeLogf(self->ue_object,
+		FVisualLogger::CylinderLogf(self->ue_object,
 			FLogCategoryBase(UTF8_TO_TCHAR(category), (ELogVerbosity::Type)verbosity, (ELogVerbosity::Type)verbosity),
 			(ELogVerbosity::Type)verbosity,
-			py_vec_start->vec, py_vec_end->vec, radius, color,
+			py_vec_start->vec, py_vec_end->vec, radius, color, false,
 			TEXT("%s"), UTF8_TO_TCHAR(text));
 	}
 #endif

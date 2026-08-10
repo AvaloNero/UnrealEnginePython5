@@ -42,7 +42,12 @@ static int ue_py_srotator_input_box_init(ue_PySRotatorInputBox *self, PyObject *
 {
 	ue_py_slate_setup_farguments(SRotatorInputBox);
 
-	ue_py_slate_farguments_optional_bool("allow_responsive_layout", AllowResponsiveLayout);
+	if (ue_py_dict_get_item(kwargs, "allow_responsive_layout") &&
+		PyErr_WarnEx(PyExc_DeprecationWarning,
+			"allow_responsive_layout is ignored by UE 5.8 SRotatorInputBox", 1) < 0)
+	{
+		return -1;
+	}
 	ue_py_slate_farguments_optional_bool("color_axis_labels", bColorAxisLabels);
 	ue_py_slate_farguments_optional_bool("allow_spin", AllowSpin);
 	ue_py_slate_farguments_struct("font", Font, FSlateFontInfo);

@@ -13,7 +13,9 @@ for a queue of UMovieSceneCapture objects
 */
 
 #include "AudioDevice.h"
+#include "AudioDeviceHandle.h"
 #include "Editor/EditorEngine.h"
+#include "PlayInEditorDataTypes.h"
 #include "Slate/SceneViewport.h"
 #include "AutomatedLevelSequenceCapture.h"
 
@@ -118,15 +120,15 @@ private:
 		UGameViewportClient::OnViewportCreated().AddRaw(this, &FInEditorMultiCapture::OnStart);
 		FEditorDelegates::EndPIE.AddRaw(this, &FInEditorMultiCapture::OnEndPIE);
 
-		FAudioDevice* AudioDevice = GEngine->GetMainAudioDevice();
-		if (AudioDevice != nullptr)
+		FAudioDeviceHandle AudioDevice = GEngine->GetMainAudioDevice();
+		if (AudioDevice)
 		{
-			TransientMasterVolume = AudioDevice->GetTransientMasterVolume();
-			AudioDevice->SetTransientMasterVolume(0.0f);
+			TransientMasterVolume = AudioDevice->GetTransientPrimaryVolume();
+			AudioDevice->SetTransientPrimaryVolume(0.0f);
 		}
 
 		// play at the next tick
-		FTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateRaw(this, &FInEditorMultiCapture::PlaySession), 0);
+		FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateRaw(this, &FInEditorMultiCapture::PlaySession), 0);
 	}
 
 	bool PlaySession(float DeltaTime)
@@ -147,7 +149,12 @@ private:
 		}
 
 
-		GEditor->RequestPlaySession(true, nullptr, false);
+		FRequestPlaySessionParams RequestParams;
+		RequestParams.SessionDestination = EPlaySessionDestinationType::InProcess;
+		RequestParams.WorldType = EPlaySessionWorldType::PlayInEditor;
+		RequestParams.EditorPlaySettings = GetMutableDefault<ULevelEditorPlaySettings>();
+		RequestParams.CustomPIEWindow = CustomPIEWindow;
+		GEditor->RequestPlaySession(RequestParams);
 		return false;
 	}
 
@@ -165,7 +172,7 @@ private:
 			.AutoCenter(EAutoCenter::PrimaryWorkArea)
 			.UseOSWindowBorder(true)
 			.FocusWhenFirstShown(false)
-#if ENGINE_MINOR_VERSION > 15
+#if UEP_LEGACY_ENGINE_MINOR_VERSION > 15
 			.ActivationPolicy(EWindowActivationPolicy::Never)
 #endif
 			.HasCloseButton(true)
@@ -177,13 +184,13 @@ private:
 
 		FSlateApplication::Get().AddWindow(CustomWindow);
 
-		PlayInEditorSettings->CustomPIEWindow = CustomWindow;
+		CustomPIEWindow = CustomWindow;
 
 		// Reset everything else
 		PlayInEditorSettings->GameGetsMouseControl = false;
 		PlayInEditorSettings->ShowMouseControlLabel = false;
 		PlayInEditorSettings->ViewportGetsHMDControl = false;
-#if ENGINE_MINOR_VERSION >= 17
+#if UEP_LEGACY_ENGINE_MINOR_VERSION >= 17
 		PlayInEditorSettings->ShouldMinimizeEditorOnVRPIE = true;
 		PlayInEditorSettings->EnableGameSound = false;
 #endif
@@ -196,7 +203,7 @@ private:
 		PlayInEditorSettings->LaunchConfiguration = EPlayOnLaunchConfiguration::LaunchConfig_Default;
 		PlayInEditorSettings->SetPlayNetMode(EPlayNetMode::PIE_Standalone);
 		PlayInEditorSettings->SetRunUnderOneProcess(true);
-		PlayInEditorSettings->SetPlayNetDedicated(false);
+		PlayInEditorSettings->bLaunchSeparateServer = false;
 		PlayInEditorSettings->SetPlayNumberOfClients(1);
 	}
 
@@ -278,11 +285,12 @@ private:
 
 		FObjectReader(GetMutableDefault<ULevelEditorPlaySettings>(), BackedUpPlaySettings);
 
-		FAudioDevice* AudioDevice = GEngine->GetMainAudioDevice();
-		if (AudioDevice != nullptr)
+		FAudioDeviceHandle AudioDevice = GEngine->GetMainAudioDevice();
+		if (AudioDevice)
 		{
-			AudioDevice->SetTransientMasterVolume(TransientMasterVolume);
+			AudioDevice->SetTransientPrimaryVolume(TransientMasterVolume);
 		}
+		CustomPIEWindow.Reset();
 
 		CurrentCaptureObject->Close();
 		//CurrentCaptureObject->RemoveFromRoot();
@@ -322,6 +330,7 @@ private:
 	}
 
 	TSharedPtr<FInEditorMultiCapture> OnlyStrongReference;
+	TWeakPtr<SWindow> CustomPIEWindow;
 	UWorld* CapturingFromWorld;
 
 	bool bScreenMessagesWereEnabled;
@@ -402,7 +411,7 @@ PyObject *py_ue_set_level_sequence_asset(ue_PyUObject *self, PyObject *args)
 	if (!capture)
 		return PyErr_Format(PyExc_Exception, "uobject is not a UAutomatedLevelSequenceCapture");
 
-#if ENGINE_MINOR_VERSION < 20
+#if UEP_LEGACY_ENGINE_MINOR_VERSION < 20
 	capture->SetLevelSequenceAsset(sequence->GetPathName());
 #else
 	capture->LevelSequenceAsset = FSoftObjectPath(sequence->GetPathName());

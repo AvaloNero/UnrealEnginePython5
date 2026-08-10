@@ -105,8 +105,10 @@ static PyObject *py_ue_feditor_viewport_client_set_realtime(ue_PyFEditorViewport
 	if (!PyArg_ParseTuple(args, "OO", &bInRealtime, &bStoreCurrentValue))
 		return nullptr;
 
-	self->editor_viewport_client->SetRealtime(PyObject_IsTrue(bInRealtime) ? true : false,
-		PyObject_IsTrue(bStoreCurrentValue) ? true : false);
+	// UE has ignored bStoreCurrentValue for years and removed it from the
+	// supported overload. Keep accepting the argument for Python API stability.
+	(void)bStoreCurrentValue;
+	self->editor_viewport_client->SetRealtime(PyObject_IsTrue(bInRealtime) ? true : false);
 	Py_RETURN_NONE;
 }
 

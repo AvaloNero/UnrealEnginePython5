@@ -1,8 +1,10 @@
 #include "UEPyInput.h"
 
 #include "Kismet/GameplayStatics.h"
+#include "Components/InputComponent.h"
 #include "Engine/World.h"
 #include "GameFramework/PlayerInput.h"
+#include "InputKeyEventArgs.h"
 
 
 PyObject *py_ue_is_input_key_down(ue_PyUObject *self, PyObject * args)
@@ -585,7 +587,13 @@ PyObject *py_ue_input_axis(ue_PyUObject * self, PyObject * args)
 	if (!key)
 		return PyErr_Format(PyExc_Exception, "argument is not a FKey");
 
-	if (controller->InputAxis(*key, delta, delta_time, num_samples, py_gamepad && PyObject_IsTrue(py_gamepad)))
+	if (py_gamepad && PyObject_IsTrue(py_gamepad) && !key->IsGamepadKey())
+	{
+		UE_LOG(LogPython, Warning, TEXT("input_axis gamepad override is no longer supported by UE5; the FKey device type is used"));
+	}
+	FInputKeyEventArgs EventArgs = FInputKeyEventArgs::CreateSimulated(*key, IE_Axis, delta, num_samples);
+	EventArgs.DeltaTime = delta_time;
+	if (controller->InputKey(EventArgs))
 	{
 		Py_RETURN_TRUE;
 	}
@@ -617,7 +625,12 @@ PyObject *py_ue_input_key(ue_PyUObject * self, PyObject * args)
 	if (!key)
 		return PyErr_Format(PyExc_Exception, "argument is not a FKey");
 
-	if (controller->InputKey(*key, (EInputEvent)event_type, amount, py_gamepad && PyObject_IsTrue(py_gamepad)))
+	if (py_gamepad && PyObject_IsTrue(py_gamepad) && !key->IsGamepadKey())
+	{
+		UE_LOG(LogPython, Warning, TEXT("input_key gamepad override is no longer supported by UE5; the FKey device type is used"));
+	}
+	const FInputKeyEventArgs EventArgs = FInputKeyEventArgs::CreateSimulated(*key, static_cast<EInputEvent>(event_type), amount);
+	if (controller->InputKey(EventArgs))
 	{
 		Py_RETURN_TRUE;
 	}

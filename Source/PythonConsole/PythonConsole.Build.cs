@@ -1,19 +1,14 @@
 // Copyright 1998-2016 Epic Games, Inc. All Rights Reserved.
 
 using UnrealBuildTool;
-using System.IO;
+using System;
 
 public class PythonConsole : ModuleRules
 {
-#if WITH_FORWARDED_MODULE_RULES_CTOR
     public PythonConsole(ReadOnlyTargetRules Target) : base(Target)
-#else
-    public PythonConsole(TargetInfo Target)
-#endif
     {
         PCHUsage = ModuleRules.PCHUsageMode.UseExplicitOrSharedPCHs;
-        string enableUnityBuild = System.Environment.GetEnvironmentVariable("UEP_ENABLE_UNITY_BUILD");
-        bFasterWithoutUnity = string.IsNullOrEmpty(enableUnityBuild);
+        bUseUnity = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("UEP_ENABLE_UNITY_BUILD"));
 
         PrivateIncludePaths.AddRange(
             new string[] {
@@ -27,8 +22,10 @@ public class PythonConsole : ModuleRules
                 "Core",
                 "CoreUObject", // @todo Mac: for some reason it's needed to link in debug on Mac
 				"Engine",
-                "InputCore",
-                "UnrealEd",
+				"InputCore",
+				"OutputLog",
+				"Python3",
+				"UnrealEd",
                 "Slate",
                 "SlateCore",
                 "EditorStyle",

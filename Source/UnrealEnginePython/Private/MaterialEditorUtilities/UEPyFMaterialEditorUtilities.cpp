@@ -4,6 +4,7 @@
 
 #include "Materials/Material.h"
 #include "Runtime/Engine/Classes/EdGraph/EdGraph.h"
+#include "Editor.h"
 
 static PyObject *py_ue_paste_nodes_here(PyObject *cls, PyObject * args)
 {
@@ -54,7 +55,8 @@ static PyObject *py_ue_command_apply(PyObject *cls, PyObject * args)
 		return PyErr_Format(PyExc_Exception, "argument is not a UMaterial");
 	}
 
-	IAssetEditorInstance *Instance = FAssetEditorManager::Get().FindEditorForAsset(Material, false);
+	UAssetEditorSubsystem* AssetEditorSubsystem = GEditor ? GEditor->GetEditorSubsystem<UAssetEditorSubsystem>() : nullptr;
+	IAssetEditorInstance *Instance = AssetEditorSubsystem ? AssetEditorSubsystem->FindEditorForAsset(Material, false) : nullptr;
 	if (!Instance)
 	{
 		return PyErr_Format(PyExc_Exception, "unable to retrieve editor for UMaterial");

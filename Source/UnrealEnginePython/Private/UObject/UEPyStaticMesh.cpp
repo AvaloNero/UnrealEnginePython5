@@ -9,7 +9,7 @@ PyObject *py_ue_static_mesh_get_bounds(ue_PyUObject *self, PyObject * args)
         return PyErr_Format(PyExc_Exception, "uobject is not a UStaticMesh");
 
     FBoxSphereBounds bounds = mesh->GetBounds();
-    UScriptStruct *u_struct = FindObject<UScriptStruct>(ANY_PACKAGE, UTF8_TO_TCHAR("BoxSphereBounds"));
+    UScriptStruct *u_struct = ue_py_find_first_object<UScriptStruct>(TEXT("BoxSphereBounds"));
     if (!u_struct)
     {
         return PyErr_Format(PyExc_Exception, "unable to get BoxSphereBounds struct");
@@ -87,8 +87,8 @@ PyObject *py_ue_static_mesh_build(ue_PyUObject *self, PyObject * args)
 	if (!mesh)
 		return PyErr_Format(PyExc_Exception, "uobject is not a UStaticMesh");
 
-#if ENGINE_MINOR_VERSION > 13
-	mesh->ImportVersion = EImportStaticMeshVersion::LastVersion;
+#if UEP_LEGACY_ENGINE_MINOR_VERSION > 13
+	mesh->SetImportVersion(static_cast<int32>(EImportStaticMeshVersion::LastVersion));
 #endif
 	mesh->Build();
 
@@ -124,10 +124,10 @@ PyObject *py_ue_static_mesh_get_raw_mesh(ue_PyUObject *self, PyObject * args)
 
 	FRawMesh raw_mesh;
 
-	if (lod_index < 0 || lod_index >= mesh->SourceModels.Num())
+	if (lod_index < 0 || lod_index >= mesh->GetNumSourceModels())
 		return PyErr_Format(PyExc_Exception, "invalid LOD index");
 
-	mesh->SourceModels[lod_index].RawMeshBulkData->LoadRawMesh(raw_mesh);
+	mesh->GetSourceModel(lod_index).RawMeshBulkData->LoadRawMesh(raw_mesh);
 
 	return py_ue_new_fraw_mesh(raw_mesh);
 }
@@ -145,7 +145,7 @@ PyObject *py_ue_static_mesh_import_lod(ue_PyUObject *self, PyObject * args)
 	if (!mesh)
 		return PyErr_Format(PyExc_Exception, "uobject is not a UStaticMesh");
 
-	if (FbxMeshUtils::ImportStaticMeshLOD(mesh, FString(UTF8_TO_TCHAR(filename)), lod_level))
+	if (FbxMeshUtils::ImportStaticMeshLOD(mesh, FString(UTF8_TO_TCHAR(filename)), lod_level, false))
 	{
 		Py_RETURN_TRUE;
 	}

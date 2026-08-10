@@ -111,15 +111,15 @@
 #include "PythonFunction.h"
 #include "PythonClass.h"
 
-#if ENGINE_MINOR_VERSION >= 15
+#if UEP_LEGACY_ENGINE_MINOR_VERSION >= 15
 #include "Engine/UserDefinedEnum.h"
 #endif
 
 #include "Runtime/Core/Public/UObject/PropertyPortFlags.h"
 
-#if ENGINE_MINOR_VERSION < 18
-#define USoftObjectProperty UAssetObjectProperty
-#define USoftClassProperty UAssetClassProperty
+#if UEP_LEGACY_ENGINE_MINOR_VERSION < 18
+#define FSoftObjectProperty UAssetObjectProperty
+#define FSoftClassProperty UAssetClassProperty
 typedef FAssetPtr FSoftObjectPtr;
 #endif
 
@@ -202,8 +202,7 @@ static PyObject* py_ue_get_py_proxy(ue_PyUObject* self, PyObject* args)
 
 static PyObject* py_unreal_engine_shutdown(PyObject* self, PyObject* args)
 {
-
-	GIsRequestingExit = true;
+	RequestEngineExit(TEXT("Python requested engine shutdown"));
 
 	Py_RETURN_NONE;
 }
@@ -600,7 +599,7 @@ static PyMethodDef ue_PyUObject_methods[] = {
 	{ "import_custom_properties", (PyCFunction)py_ue_import_custom_properties, METH_VARARGS, "" },
 #endif
 
-#if ENGINE_MINOR_VERSION >= 15
+#if UEP_LEGACY_ENGINE_MINOR_VERSION >= 15
 	{ "can_modify", (PyCFunction)py_ue_can_modify, METH_VARARGS, "" },
 #endif
 
@@ -740,11 +739,11 @@ static PyMethodDef ue_PyUObject_methods[] = {
 	{ "extract_root_motion", (PyCFunction)py_ue_anim_extract_root_motion, METH_VARARGS, "" },
 
 #if WITH_EDITOR
-#if ENGINE_MINOR_VERSION > 13
+#if UEP_LEGACY_ENGINE_MINOR_VERSION > 13
 	{ "get_raw_animation_data", (PyCFunction)py_ue_anim_sequence_get_raw_animation_data, METH_VARARGS, "" },
 	{ "get_raw_animation_track", (PyCFunction)py_ue_anim_sequence_get_raw_animation_track, METH_VARARGS, "" },
 	{ "add_new_raw_track", (PyCFunction)py_ue_anim_sequence_add_new_raw_track, METH_VARARGS, "" },
-#if ENGINE_MINOR_VERSION <23
+#if UEP_LEGACY_ENGINE_MINOR_VERSION <23
 	{ "update_compressed_track_map_from_raw", (PyCFunction)py_ue_anim_sequence_update_compressed_track_map_from_raw, METH_VARARGS, "" },
 #endif
 	{ "update_raw_track", (PyCFunction)py_ue_anim_sequence_update_raw_track, METH_VARARGS, "" },
@@ -1024,12 +1023,12 @@ static PyMethodDef ue_PyUObject_methods[] = {
 	{ "skeleton_find_bone_index", (PyCFunction)py_ue_skeleton_find_bone_index, METH_VARARGS, "" },
 	{ "skeleton_get_ref_bone_pose", (PyCFunction)py_ue_skeleton_get_ref_bone_pose, METH_VARARGS, "" },
 
-#if ENGINE_MINOR_VERSION > 13
+#if UEP_LEGACY_ENGINE_MINOR_VERSION > 13
 	{ "skeleton_add_bone", (PyCFunction)py_ue_skeleton_add_bone, METH_VARARGS, "" },
 #endif
 
 #if WITH_EDITOR
-#if ENGINE_MINOR_VERSION > 12
+#if UEP_LEGACY_ENGINE_MINOR_VERSION > 12
 	{ "skeletal_mesh_set_soft_vertices", (PyCFunction)py_ue_skeletal_mesh_set_soft_vertices, METH_VARARGS, "" },
 	{ "skeletal_mesh_get_soft_vertices", (PyCFunction)py_ue_skeletal_mesh_get_soft_vertices, METH_VARARGS, "" },
 #endif
@@ -1040,7 +1039,7 @@ static PyMethodDef ue_PyUObject_methods[] = {
 	{ "skeletal_mesh_set_skeleton", (PyCFunction)py_ue_skeletal_mesh_set_skeleton, METH_VARARGS, "" },
 
 #if WITH_EDITOR
-#if ENGINE_MINOR_VERSION > 12
+#if UEP_LEGACY_ENGINE_MINOR_VERSION > 12
 	{ "skeletal_mesh_get_bone_map", (PyCFunction)py_ue_skeletal_mesh_get_bone_map, METH_VARARGS, "" },
 	{ "skeletal_mesh_set_bone_map", (PyCFunction)py_ue_skeletal_mesh_set_bone_map, METH_VARARGS, "" },
 #endif
@@ -1170,7 +1169,7 @@ static PyMethodDef ue_PyUObject_methods[] = {
 	{ "get_archetype_instances", (PyCFunction)py_ue_get_archetype_instances, METH_VARARGS, "" },
 	{ "enum_values", (PyCFunction)py_ue_enum_values, METH_VARARGS, "" },
 	{ "enum_names", (PyCFunction)py_ue_enum_names, METH_VARARGS, "" },
-#if ENGINE_MINOR_VERSION >= 15
+#if UEP_LEGACY_ENGINE_MINOR_VERSION >= 15
 	{ "enum_user_defined_names", (PyCFunction)py_ue_enum_user_defined_names, METH_VARARGS, "" },
 #endif
 
@@ -1223,7 +1222,7 @@ static PyObject* ue_PyUObject_getattro(ue_PyUObject* self, PyObject* attr_name)
 			{
 				u_struct = (UStruct*)self->ue_object->GetClass();
 			}
-			UProperty* u_property = u_struct->FindPropertyByName(FName(UTF8_TO_TCHAR(attr)));
+			FProperty* u_property = u_struct->FindPropertyByName(FName(UTF8_TO_TCHAR(attr)));
 			if (u_property)
 			{
 				// swallow previous exception
@@ -1262,7 +1261,7 @@ static PyObject* ue_PyUObject_getattro(ue_PyUObject* self, PyObject* attr_name)
 			// last hope, is it an enum ?
 			if (!function)
 			{
-#if ENGINE_MINOR_VERSION >= 15
+#if UEP_LEGACY_ENGINE_MINOR_VERSION >= 15
 				if (self->ue_object->IsA<UUserDefinedEnum>())
 				{
 					UUserDefinedEnum* u_enum = (UUserDefinedEnum*)self->ue_object;
@@ -1272,7 +1271,7 @@ static PyObject* ue_PyUObject_getattro(ue_PyUObject* self, PyObject* attr_name)
 					{
 						if (item.Value.ToString() == attr_as_string)
 						{
-#if ENGINE_MINOR_VERSION > 15
+#if UEP_LEGACY_ENGINE_MINOR_VERSION > 15
 							return PyLong_FromLong(u_enum->GetIndexByName(item.Key));
 #else
 							return PyLong_FromLong(u_enum->FindEnumIndex(item.Key));
@@ -1286,7 +1285,7 @@ static PyObject* ue_PyUObject_getattro(ue_PyUObject* self, PyObject* attr_name)
 				{
 					UEnum* u_enum = (UEnum*)self->ue_object;
 					PyErr_Clear();
-#if ENGINE_MINOR_VERSION > 15
+#if UEP_LEGACY_ENGINE_MINOR_VERSION > 15
 					int32 value = u_enum->GetIndexByName(FName(UTF8_TO_TCHAR(attr)));
 					if (value == INDEX_NONE)
 						return PyErr_Format(PyExc_Exception, "unknown enum name \"%s\"", attr);
@@ -1315,7 +1314,7 @@ static int ue_PyUObject_setattro(ue_PyUObject* self, PyObject* attr_name, PyObje
 {
 	ue_py_check_int(self);
 
-	// first of all check for UProperty
+	// first of all check for FProperty
 	if (PyUnicodeOrString_Check(attr_name))
 	{
 		const char* attr = UEPyUnicode_AsUTF8(attr_name);
@@ -1329,7 +1328,7 @@ static int ue_PyUObject_setattro(ue_PyUObject* self, PyObject* attr_name, PyObje
 		{
 			u_struct = (UStruct*)self->ue_object->GetClass();
 		}
-		UProperty* u_property = u_struct->FindPropertyByName(FName(UTF8_TO_TCHAR(attr)));
+		FProperty* u_property = u_struct->FindPropertyByName(FName(UTF8_TO_TCHAR(attr)));
 		if (u_property)
 		{
 #if WITH_EDITOR
@@ -1355,7 +1354,7 @@ static int ue_PyUObject_setattro(ue_PyUObject* self, PyObject* attr_name, PyObje
 						}
 						else
 						{
-							PyErr_SetString(PyExc_ValueError, "invalid value for UProperty");
+							PyErr_SetString(PyExc_ValueError, "invalid value for FProperty");
 							return -1;
 						}
 					}
@@ -1363,7 +1362,7 @@ static int ue_PyUObject_setattro(ue_PyUObject* self, PyObject* attr_name, PyObje
 #endif
 				return 0;
 			}
-			PyErr_SetString(PyExc_ValueError, "invalid value for UProperty");
+			PyErr_SetString(PyExc_ValueError, "invalid value for FProperty");
 			return -1;
 		}
 
@@ -1473,19 +1472,19 @@ static PyObject* ue_PyUObject_call(ue_PyUObject* self, PyObject* args, PyObject*
 					break;
 				}
 
-				UProperty* u_property = ue_struct_get_field_from_name(u_script_struct, (char*)struct_key);
+				FProperty* u_property = ue_struct_get_field_from_name(u_script_struct, (char*)struct_key);
 				if (u_property)
 				{
 					if (!ue_py_convert_pyobject(value, u_property, data, 0))
 					{
 						FMemory::Free(data);
-						return PyErr_Format(PyExc_Exception, "invalid value for UProperty");
+						return PyErr_Format(PyExc_Exception, "invalid value for FProperty");
 					}
 				}
 				else
 				{
 					FMemory::Free(data);
-					return PyErr_Format(PyExc_Exception, "UProperty %s not found", struct_key);
+					return PyErr_Format(PyExc_Exception, "FProperty %s not found", struct_key);
 				}
 			}
 		}
@@ -1531,6 +1530,7 @@ static PyTypeObject ue_PyUObjectType = {
 
 
 
+#if UEP_WITH_DYNAMIC_CLASS_GENERATION
 UClass* unreal_engine_new_uclass(char* name, UClass* outer_parent)
 {
 	bool is_overwriting = false;
@@ -1544,7 +1544,7 @@ UClass* unreal_engine_new_uclass(char* name, UClass* outer_parent)
 		outer = parent->GetOuter();
 	}
 
-	UClass* new_object = FindObject<UClass>(ANY_PACKAGE, UTF8_TO_TCHAR(name));
+	UClass* new_object = ue_py_find_first_object<UClass>(UTF8_TO_TCHAR(name));
 	if (!new_object)
 	{
 		new_object = NewObject<UPythonClass>(outer, UTF8_TO_TCHAR(name), RF_Public | RF_Transient | RF_MarkAsNative);
@@ -1632,6 +1632,13 @@ UClass* unreal_engine_new_uclass(char* name, UClass* outer_parent)
 
 	return new_object;
 }
+#else
+UClass* unreal_engine_new_uclass(char* name, UClass* outer_parent)
+{
+	UE_LOG(LogPython, Warning, TEXT("Dynamic UClass generation is not available in the UE5.8 core port"));
+	return nullptr;
+}
+#endif
 
 
 
@@ -1673,7 +1680,7 @@ void unreal_engine_init_py_module()
 	ue_python_init_flinearcolor(new_unreal_engine_module);
 	ue_python_init_fquat(new_unreal_engine_module);
 
-#if ENGINE_MINOR_VERSION >= 20
+#if UEP_LEGACY_ENGINE_MINOR_VERSION >= 20
 	ue_python_init_fframe_number(new_unreal_engine_module);
 #endif
 
@@ -1720,10 +1727,10 @@ void unreal_engine_init_py_module()
 	ue_python_init_fassetdata(new_unreal_engine_module);
 	ue_python_init_edgraphpin(new_unreal_engine_module);
 	ue_python_init_fstring_asset_reference(new_unreal_engine_module);
-#if ENGINE_MINOR_VERSION > 12
+#if UEP_LEGACY_ENGINE_MINOR_VERSION > 12
 	ue_python_init_fbx(new_unreal_engine_module);
 #endif
-#if ENGINE_MINOR_VERSION > 13
+#if UEP_LEGACY_ENGINE_MINOR_VERSION > 13
 	ue_python_init_fraw_mesh(new_unreal_engine_module);
 #endif
 	ue_python_init_iplugin(new_unreal_engine_module);
@@ -1799,7 +1806,9 @@ void unreal_engine_init_py_module()
 	PyDict_SetItemString(unreal_engine_dict, "RF_TAGGARBAGETEMP", PyLong_FromUnsignedLongLong((uint64)RF_TagGarbageTemp));
 	PyDict_SetItemString(unreal_engine_dict, "RF_NEEDINITIALIZATION", PyLong_FromUnsignedLongLong((uint64)RF_NeedInitialization));
 	PyDict_SetItemString(unreal_engine_dict, "RF_NEEDLOAD", PyLong_FromUnsignedLongLong((uint64)RF_NeedLoad));
+#if ENGINE_MAJOR_VERSION < 5
 	PyDict_SetItemString(unreal_engine_dict, "RF_KEEPFORCOOKER", PyLong_FromUnsignedLongLong((uint64)RF_KeepForCooker));
+#endif
 	PyDict_SetItemString(unreal_engine_dict, "RF_NEEDPOSTLOAD", PyLong_FromUnsignedLongLong((uint64)RF_NeedPostLoad));
 	PyDict_SetItemString(unreal_engine_dict, "RF_NEEDPOSTLOADSUBOBJECTS", PyLong_FromUnsignedLongLong((uint64)RF_NeedPostLoadSubobjects));
 	PyDict_SetItemString(unreal_engine_dict, "RF_NEWERVERSIONEXISTS", PyLong_FromUnsignedLongLong((uint64)RF_NewerVersionExists));
@@ -1814,9 +1823,11 @@ void unreal_engine_init_py_module()
 	PyDict_SetItemString(unreal_engine_dict, "RF_DUPLICATETRANSIENT", PyLong_FromUnsignedLongLong((uint64)RF_DuplicateTransient));
 	PyDict_SetItemString(unreal_engine_dict, "RF_STRONGREFONFRAME", PyLong_FromUnsignedLongLong((uint64)RF_StrongRefOnFrame));
 	PyDict_SetItemString(unreal_engine_dict, "RF_NONPIEDUPLICATETRANSIENT", PyLong_FromUnsignedLongLong((uint64)RF_NonPIEDuplicateTransient));
+#if ENGINE_MAJOR_VERSION < 5
 	PyDict_SetItemString(unreal_engine_dict, "RF_DYNAMIC", PyLong_FromUnsignedLongLong((uint64)RF_Dynamic));
+#endif
 
-#if ENGINE_MINOR_VERSION > 15
+#if UEP_LEGACY_ENGINE_MINOR_VERSION > 15
 	PyDict_SetItemString(unreal_engine_dict, "RF_WILLBELOADED", PyLong_FromUnsignedLongLong((uint64)RF_WillBeLoaded));
 #endif
 
@@ -1861,7 +1872,7 @@ ue_PyUObject* ue_get_python_uobject(UObject* ue_obj)
 	ue_PyUObject* ret = FUnrealEnginePythonHouseKeeper::Get()->GetPyUObject(ue_obj);
 	if (!ret)
 	{
-		if (!ue_obj->IsValidLowLevel() || ue_obj->IsPendingKillOrUnreachable())
+		if (!::IsValid(ue_obj))
 			return nullptr;
 
 		ue_PyUObject* ue_py_object = (ue_PyUObject*)PyObject_New(ue_PyUObject, &ue_PyUObjectType);
@@ -2015,9 +2026,9 @@ AActor* ue_get_actor(ue_PyUObject* py_obj)
 }
 
 // convert a property to a python object
-PyObject* ue_py_convert_property(UProperty* prop, uint8* buffer, int32 index)
+PyObject* ue_py_convert_property(FProperty* prop, uint8* buffer, int32 index, bool copy_structs)
 {
-	if (auto casted_prop = Cast<UBoolProperty>(prop))
+	if (auto casted_prop = CastField<FBoolProperty>(prop))
 	{
 		bool value = casted_prop->GetPropertyValue_InContainer(buffer, index);
 		if (value)
@@ -2027,44 +2038,50 @@ PyObject* ue_py_convert_property(UProperty* prop, uint8* buffer, int32 index)
 		Py_RETURN_FALSE;
 	}
 
-	if (auto casted_prop = Cast<UIntProperty>(prop))
+	if (auto casted_prop = CastField<FIntProperty>(prop))
 	{
 		int value = casted_prop->GetPropertyValue_InContainer(buffer, index);
 		return PyLong_FromLong(value);
 	}
 
-	if (auto casted_prop = Cast<UUInt32Property>(prop))
+	if (auto casted_prop = CastField<FUInt32Property>(prop))
 	{
 		uint32 value = casted_prop->GetPropertyValue_InContainer(buffer, index);
 		return PyLong_FromUnsignedLong(value);
 	}
 
-	if (auto casted_prop = Cast<UInt64Property>(prop))
+	if (auto casted_prop = CastField<FInt64Property>(prop))
 	{
 		long long value = casted_prop->GetPropertyValue_InContainer(buffer, index);
 		return PyLong_FromLongLong(value);
 	}
 
-	if (auto casted_prop = Cast<UUInt64Property>(prop))
+	if (auto casted_prop = CastField<FUInt64Property>(prop))
 	{
 		uint64 value = casted_prop->GetPropertyValue_InContainer(buffer, index);
 		return PyLong_FromUnsignedLongLong(value);
 	}
 
-	if (auto casted_prop = Cast<UFloatProperty>(prop))
+	if (auto casted_prop = CastField<FFloatProperty>(prop))
 	{
 		float value = casted_prop->GetPropertyValue_InContainer(buffer, index);
 		return PyFloat_FromDouble(value);
 	}
 
-	if (auto casted_prop = Cast<UByteProperty>(prop))
+	if (auto casted_prop = CastField<FDoubleProperty>(prop))
+	{
+		double value = casted_prop->GetPropertyValue_InContainer(buffer, index);
+		return PyFloat_FromDouble(value);
+	}
+
+	if (auto casted_prop = CastField<FByteProperty>(prop))
 	{
 		uint8 value = casted_prop->GetPropertyValue_InContainer(buffer, index);
 		return PyLong_FromUnsignedLong(value);
 	}
 
-#if ENGINE_MINOR_VERSION >= 15
-	if (auto casted_prop = Cast<UEnumProperty>(prop))
+#if UEP_LEGACY_ENGINE_MINOR_VERSION >= 15
+	if (auto casted_prop = CastField<FEnumProperty>(prop))
 	{
 		void* prop_addr = casted_prop->ContainerPtrToValuePtr<void>(buffer, index);
 		uint64 enum_index = casted_prop->GetUnderlyingProperty()->GetUnsignedIntPropertyValue(prop_addr);
@@ -2072,25 +2089,25 @@ PyObject* ue_py_convert_property(UProperty* prop, uint8* buffer, int32 index)
 	}
 #endif
 
-	if (auto casted_prop = Cast<UStrProperty>(prop))
+	if (auto casted_prop = CastField<FStrProperty>(prop))
 	{
 		FString value = casted_prop->GetPropertyValue_InContainer(buffer, index);
 		return PyUnicode_FromString(TCHAR_TO_UTF8(*value));
 	}
 
-	if (auto casted_prop = Cast<UTextProperty>(prop))
+	if (auto casted_prop = CastField<FTextProperty>(prop))
 	{
 		FText value = casted_prop->GetPropertyValue_InContainer(buffer, index);
 		return PyUnicode_FromString(TCHAR_TO_UTF8(*value.ToString()));
 	}
 
-	if (auto casted_prop = Cast<UNameProperty>(prop))
+	if (auto casted_prop = CastField<FNameProperty>(prop))
 	{
 		FName value = casted_prop->GetPropertyValue_InContainer(buffer, index);
 		return PyUnicode_FromString(TCHAR_TO_UTF8(*value.ToString()));
 	}
 
-	if (auto casted_prop = Cast<UObjectPropertyBase>(prop))
+	if (auto casted_prop = CastField<FObjectPropertyBase>(prop))
 	{
 		auto value = casted_prop->GetObjectPropertyValue_InContainer(buffer, index);
 		if (value)
@@ -2100,7 +2117,7 @@ PyObject* ue_py_convert_property(UProperty* prop, uint8* buffer, int32 index)
 		Py_RETURN_NONE;
 	}
 
-	if (auto casted_prop = Cast<UClassProperty>(prop))
+	if (auto casted_prop = CastField<FClassProperty>(prop))
 	{
 		auto value = casted_prop->GetPropertyValue_InContainer(buffer, index);
 		if (value)
@@ -2111,7 +2128,7 @@ PyObject* ue_py_convert_property(UProperty* prop, uint8* buffer, int32 index)
 	}
 
 	// try to manage known struct first
-	if (auto casted_prop = Cast<UStructProperty>(prop))
+	if (auto casted_prop = CastField<FStructProperty>(prop))
 	{
 		if (auto casted_struct = Cast<UScriptStruct>(casted_prop->Struct))
 		{
@@ -2150,12 +2167,15 @@ PyObject* ue_py_convert_property(UProperty* prop, uint8* buffer, int32 index)
 				FLinearColor color = *casted_prop->ContainerPtrToValuePtr<FLinearColor>(buffer, index);
 				return py_ue_new_flinearcolor(color);
 			}
-			return py_ue_new_uscriptstruct(casted_struct, casted_prop->ContainerPtrToValuePtr<uint8>(buffer, index));
+			uint8* struct_value = casted_prop->ContainerPtrToValuePtr<uint8>(buffer, index);
+			return copy_structs
+				? py_ue_new_owned_uscriptstruct(casted_struct, struct_value)
+				: py_ue_new_uscriptstruct(casted_struct, struct_value);
 		}
 		return PyErr_Format(PyExc_TypeError, "unsupported UStruct type");
 	}
 
-	if (auto casted_prop = Cast<UWeakObjectProperty>(prop))
+	if (auto casted_prop = CastField<FWeakObjectProperty>(prop))
 	{
 		auto value = casted_prop->GetPropertyValue_InContainer(buffer, index);
 		UObject* strong_obj = value.Get();
@@ -2167,24 +2187,24 @@ PyObject* ue_py_convert_property(UProperty* prop, uint8* buffer, int32 index)
 		Py_RETURN_NONE;
 	}
 
-	if (auto casted_prop = Cast<UMulticastDelegateProperty>(prop))
+	if (auto casted_prop = CastField<FMulticastDelegateProperty>(prop))
 	{
-		Py_RETURN_UOBJECT(casted_prop);
+		return ue_py_new_fproperty_capsule(casted_prop);
 	}
 
-	if (auto casted_prop = Cast<UDelegateProperty>(prop))
+	if (auto casted_prop = CastField<FDelegateProperty>(prop))
 	{
-		Py_RETURN_UOBJECT(casted_prop);
+		return ue_py_new_fproperty_capsule(casted_prop);
 	}
 
-	if (auto casted_prop = Cast<UArrayProperty>(prop))
+	if (auto casted_prop = CastField<FArrayProperty>(prop))
 	{
 		FScriptArrayHelper_InContainer array_helper(casted_prop, buffer, index);
 
-		UProperty* array_prop = casted_prop->Inner;
+		FProperty* array_prop = casted_prop->Inner;
 
 		// check for TArray<uint8>, so we can use bytearray optimization
-		if (auto uint8_tarray = Cast<UByteProperty>(array_prop))
+		if (auto uint8_tarray = CastField<FByteProperty>(array_prop))
 		{
 			uint8* buf = array_helper.GetRawPtr();
 			return PyByteArray_FromStringAndSize((char*)buf, array_helper.Num());
@@ -2194,7 +2214,7 @@ PyObject* ue_py_convert_property(UProperty* prop, uint8* buffer, int32 index)
 
 		for (int i = 0; i < array_helper.Num(); i++)
 		{
-			PyObject* item = ue_py_convert_property(array_prop, array_helper.GetRawPtr(i), 0);
+			PyObject* item = ue_py_convert_property(array_prop, array_helper.GetRawPtr(i), 0, copy_structs);
 			if (!item)
 			{
 				Py_DECREF(py_list);
@@ -2207,8 +2227,8 @@ PyObject* ue_py_convert_property(UProperty* prop, uint8* buffer, int32 index)
 		return py_list;
 	}
 
-#if ENGINE_MINOR_VERSION >= 15
-	if (auto casted_prop = Cast<UMapProperty>(prop))
+#if UEP_LEGACY_ENGINE_MINOR_VERSION >= 15
+	if (auto casted_prop = CastField<FMapProperty>(prop))
 	{
 		FScriptMapHelper_InContainer map_helper(casted_prop, buffer, index);
 
@@ -2221,14 +2241,14 @@ PyObject* ue_py_convert_property(UProperty* prop, uint8* buffer, int32 index)
 
 				uint8* ptr = map_helper.GetPairPtr(i);
 
-				PyObject* py_key = ue_py_convert_property(map_helper.KeyProp, ptr, 0);
+				PyObject* py_key = ue_py_convert_property(map_helper.KeyProp, ptr, 0, copy_structs);
 				if (!py_key)
 				{
 					Py_DECREF(py_dict);
 					return NULL;
 				}
 
-				PyObject* py_value = ue_py_convert_property(map_helper.ValueProp, ptr, 0);
+				PyObject* py_value = ue_py_convert_property(map_helper.ValueProp, ptr, 0, copy_structs);
 				if (!py_value)
 				{
 					Py_DECREF(py_dict);
@@ -2249,12 +2269,12 @@ PyObject* ue_py_convert_property(UProperty* prop, uint8* buffer, int32 index)
 }
 
 // convert a python object to a property
-bool ue_py_convert_pyobject(PyObject* py_obj, UProperty* prop, uint8* buffer, int32 index)
+bool ue_py_convert_pyobject(PyObject* py_obj, FProperty* prop, uint8* buffer, int32 index)
 {
 
 	if (PyBool_Check(py_obj))
 	{
-		auto casted_prop = Cast<UBoolProperty>(prop);
+		auto casted_prop = CastField<FBoolProperty>(prop);
 		if (!casted_prop)
 			return false;
 		if (PyObject_IsTrue(py_obj))
@@ -2270,50 +2290,57 @@ bool ue_py_convert_pyobject(PyObject* py_obj, UProperty* prop, uint8* buffer, in
 
 	if (PyNumber_Check(py_obj))
 	{
-		if (auto casted_prop = Cast<UIntProperty>(prop))
+		if (auto casted_prop = CastField<FIntProperty>(prop))
 		{
 			PyObject* py_long = PyNumber_Long(py_obj);
 			casted_prop->SetPropertyValue_InContainer(buffer, PyLong_AsLong(py_long), index);
 			Py_DECREF(py_long);
 			return true;
 		}
-		if (auto casted_prop = Cast<UUInt32Property>(prop))
+		if (auto casted_prop = CastField<FUInt32Property>(prop))
 		{
 			PyObject* py_long = PyNumber_Long(py_obj);
 			casted_prop->SetPropertyValue_InContainer(buffer, PyLong_AsUnsignedLong(py_long), index);
 			Py_DECREF(py_long);
 			return true;
 		}
-		if (auto casted_prop = Cast<UInt64Property>(prop))
+		if (auto casted_prop = CastField<FInt64Property>(prop))
 		{
 			PyObject* py_long = PyNumber_Long(py_obj);
 			casted_prop->SetPropertyValue_InContainer(buffer, PyLong_AsLongLong(py_long), index);
 			Py_DECREF(py_long);
 			return true;
 		}
-		if (auto casted_prop = Cast<UUInt64Property>(prop))
+		if (auto casted_prop = CastField<FUInt64Property>(prop))
 		{
 			PyObject* py_long = PyNumber_Long(py_obj);
 			casted_prop->SetPropertyValue_InContainer(buffer, PyLong_AsUnsignedLongLong(py_long), index);
 			Py_DECREF(py_long);
 			return true;
 		}
-		if (auto casted_prop = Cast<UFloatProperty>(prop))
+		if (auto casted_prop = CastField<FFloatProperty>(prop))
 		{
 			PyObject* py_float = PyNumber_Float(py_obj);
 			casted_prop->SetPropertyValue_InContainer(buffer, PyFloat_AsDouble(py_float), index);
 			Py_DECREF(py_float);
 			return true;
 		}
-		if (auto casted_prop = Cast<UByteProperty>(prop))
+		if (auto casted_prop = CastField<FDoubleProperty>(prop))
+		{
+			PyObject* py_float = PyNumber_Float(py_obj);
+			casted_prop->SetPropertyValue_InContainer(buffer, PyFloat_AsDouble(py_float), index);
+			Py_DECREF(py_float);
+			return true;
+		}
+		if (auto casted_prop = CastField<FByteProperty>(prop))
 		{
 			PyObject* py_long = PyNumber_Long(py_obj);
 			casted_prop->SetPropertyValue_InContainer(buffer, PyLong_AsUnsignedLong(py_long), index);
 			Py_DECREF(py_long);
 			return true;
 		}
-#if ENGINE_MINOR_VERSION >= 15
-		if (auto casted_prop = Cast<UEnumProperty>(prop))
+#if UEP_LEGACY_ENGINE_MINOR_VERSION >= 15
+		if (auto casted_prop = CastField<FEnumProperty>(prop))
 		{
 			PyObject* py_long = PyNumber_Long(py_obj);
 			void* prop_addr = casted_prop->ContainerPtrToValuePtr<void>(buffer, index);
@@ -2329,17 +2356,17 @@ bool ue_py_convert_pyobject(PyObject* py_obj, UProperty* prop, uint8* buffer, in
 
 	if (PyUnicodeOrString_Check(py_obj))
 	{
-		if (auto casted_prop = Cast<UStrProperty>(prop))
+		if (auto casted_prop = CastField<FStrProperty>(prop))
 		{
 			casted_prop->SetPropertyValue_InContainer(buffer, UTF8_TO_TCHAR(UEPyUnicode_AsUTF8(py_obj)), index);
 			return true;
 		}
-		if (auto casted_prop = Cast<UNameProperty>(prop))
+		if (auto casted_prop = CastField<FNameProperty>(prop))
 		{
 			casted_prop->SetPropertyValue_InContainer(buffer, UTF8_TO_TCHAR(UEPyUnicode_AsUTF8(py_obj)), index);
 			return true;
 		}
-		if (auto casted_prop = Cast<UTextProperty>(prop))
+		if (auto casted_prop = CastField<FTextProperty>(prop))
 		{
 			casted_prop->SetPropertyValue_InContainer(buffer, FText::FromString(UTF8_TO_TCHAR(UEPyUnicode_AsUTF8(py_obj))), index);
 			return true;
@@ -2349,11 +2376,11 @@ bool ue_py_convert_pyobject(PyObject* py_obj, UProperty* prop, uint8* buffer, in
 
 	if (PyBytes_Check(py_obj))
 	{
-		if (auto casted_prop = Cast<UArrayProperty>(prop))
+		if (auto casted_prop = CastField<FArrayProperty>(prop))
 		{
 			FScriptArrayHelper_InContainer helper(casted_prop, buffer, index);
 
-			if (auto item_casted_prop = Cast<UByteProperty>(casted_prop->Inner))
+			if (auto item_casted_prop = CastField<FByteProperty>(casted_prop->Inner))
 			{
 
 				Py_ssize_t pybytes_len = PyBytes_Size(py_obj);
@@ -2381,11 +2408,11 @@ bool ue_py_convert_pyobject(PyObject* py_obj, UProperty* prop, uint8* buffer, in
 
 	if (PyByteArray_Check(py_obj))
 	{
-		if (auto casted_prop = Cast<UArrayProperty>(prop))
+		if (auto casted_prop = CastField<FArrayProperty>(prop))
 		{
 			FScriptArrayHelper_InContainer helper(casted_prop, buffer, index);
 
-			if (auto item_casted_prop = Cast<UByteProperty>(casted_prop->Inner))
+			if (auto item_casted_prop = CastField<FByteProperty>(casted_prop->Inner))
 			{
 
 				Py_ssize_t pybytes_len = PyByteArray_Size(py_obj);
@@ -2414,11 +2441,11 @@ bool ue_py_convert_pyobject(PyObject* py_obj, UProperty* prop, uint8* buffer, in
 
 	if (PyList_Check(py_obj))
 	{
-		if (auto casted_prop = Cast<UArrayProperty>(prop))
+		if (auto casted_prop = CastField<FArrayProperty>(prop))
 		{
 			FScriptArrayHelper_InContainer helper(casted_prop, buffer, index);
 
-			UProperty* array_prop = casted_prop->Inner;
+			FProperty* array_prop = casted_prop->Inner;
 			Py_ssize_t pylist_len = PyList_Size(py_obj);
 
 			// fix array helper size
@@ -2447,11 +2474,11 @@ bool ue_py_convert_pyobject(PyObject* py_obj, UProperty* prop, uint8* buffer, in
 
 	if (PyTuple_Check(py_obj))
 	{
-		if (auto casted_prop = Cast<UArrayProperty>(prop))
+		if (auto casted_prop = CastField<FArrayProperty>(prop))
 		{
 			FScriptArrayHelper_InContainer helper(casted_prop, buffer, index);
 
-			UProperty* array_prop = casted_prop->Inner;
+			FProperty* array_prop = casted_prop->Inner;
 			Py_ssize_t pytuple_len = PyTuple_Size(py_obj);
 
 			// fix array helper size
@@ -2478,10 +2505,10 @@ bool ue_py_convert_pyobject(PyObject* py_obj, UProperty* prop, uint8* buffer, in
 		return false;
 	}
 
-#if ENGINE_MINOR_VERSION >= 15
+#if UEP_LEGACY_ENGINE_MINOR_VERSION >= 15
 	if (PyDict_Check(py_obj))
 	{
-		if (auto casted_prop = Cast<UMapProperty>(prop))
+		if (auto casted_prop = CastField<FMapProperty>(prop))
 		{
 			FScriptMapHelper_InContainer map_helper(casted_prop, buffer, index);
 
@@ -2519,7 +2546,7 @@ bool ue_py_convert_pyobject(PyObject* py_obj, UProperty* prop, uint8* buffer, in
 
 	if (ue_PyFVector * py_vec = py_ue_is_fvector(py_obj))
 	{
-		if (auto casted_prop = Cast<UStructProperty>(prop))
+		if (auto casted_prop = CastField<FStructProperty>(prop))
 		{
 			if (casted_prop->Struct == TBaseStructure<FVector>::Get())
 			{
@@ -2532,7 +2559,7 @@ bool ue_py_convert_pyobject(PyObject* py_obj, UProperty* prop, uint8* buffer, in
 
 	if (ue_PyFVector2D * py_vec = py_ue_is_fvector2d(py_obj))
 	{
-		if (auto casted_prop = Cast<UStructProperty>(prop))
+		if (auto casted_prop = CastField<FStructProperty>(prop))
 		{
 			if (casted_prop->Struct == TBaseStructure<FVector2D>::Get())
 			{
@@ -2545,7 +2572,7 @@ bool ue_py_convert_pyobject(PyObject* py_obj, UProperty* prop, uint8* buffer, in
 
 	if (ue_PyFRotator * py_rot = py_ue_is_frotator(py_obj))
 	{
-		if (auto casted_prop = Cast<UStructProperty>(prop))
+		if (auto casted_prop = CastField<FStructProperty>(prop))
 		{
 			if (casted_prop->Struct == TBaseStructure<FRotator>::Get())
 			{
@@ -2558,7 +2585,7 @@ bool ue_py_convert_pyobject(PyObject* py_obj, UProperty* prop, uint8* buffer, in
 
 	if (ue_PyFTransform * py_transform = py_ue_is_ftransform(py_obj))
 	{
-		if (auto casted_prop = Cast<UStructProperty>(prop))
+		if (auto casted_prop = CastField<FStructProperty>(prop))
 		{
 			if (casted_prop->Struct == TBaseStructure<FTransform>::Get())
 			{
@@ -2571,7 +2598,7 @@ bool ue_py_convert_pyobject(PyObject* py_obj, UProperty* prop, uint8* buffer, in
 
 	if (ue_PyFColor * py_color = py_ue_is_fcolor(py_obj))
 	{
-		if (auto casted_prop = Cast<UStructProperty>(prop))
+		if (auto casted_prop = CastField<FStructProperty>(prop))
 		{
 			if (casted_prop->Struct == TBaseStructure<FColor>::Get())
 			{
@@ -2585,7 +2612,7 @@ bool ue_py_convert_pyobject(PyObject* py_obj, UProperty* prop, uint8* buffer, in
 
 	if (ue_PyFLinearColor * py_color = py_ue_is_flinearcolor(py_obj))
 	{
-		if (auto casted_prop = Cast<UStructProperty>(prop))
+		if (auto casted_prop = CastField<FStructProperty>(prop))
 		{
 			if (casted_prop->Struct == TBaseStructure<FLinearColor>::Get())
 			{
@@ -2598,7 +2625,7 @@ bool ue_py_convert_pyobject(PyObject* py_obj, UProperty* prop, uint8* buffer, in
 
 	if (ue_PyFHitResult * py_hit = py_ue_is_fhitresult(py_obj))
 	{
-		if (auto casted_prop = Cast<UStructProperty>(prop))
+		if (auto casted_prop = CastField<FStructProperty>(prop))
 		{
 			if (casted_prop->Struct == FHitResult::StaticStruct())
 			{
@@ -2613,7 +2640,7 @@ bool ue_py_convert_pyobject(PyObject* py_obj, UProperty* prop, uint8* buffer, in
 	if (py_ue_is_uscriptstruct(py_obj))
 	{
 		ue_PyUScriptStruct* py_u_struct = (ue_PyUScriptStruct*)py_obj;
-		if (auto casted_prop = Cast<UStructProperty>(prop))
+		if (auto casted_prop = CastField<FStructProperty>(prop))
 		{
 			if (casted_prop->Struct == py_u_struct->u_struct)
 			{
@@ -2631,31 +2658,31 @@ bool ue_py_convert_pyobject(PyObject* py_obj, UProperty* prop, uint8* buffer, in
 		ue_PyUObject* ue_obj = (ue_PyUObject*)py_obj;
 		if (ue_obj->ue_object->IsA<UClass>())
 		{
-			if (auto casted_prop = Cast<UClassProperty>(prop))
+			if (auto casted_prop = CastField<FClassProperty>(prop))
 			{
 				casted_prop->SetPropertyValue_InContainer(buffer, ue_obj->ue_object, index);
 				return true;
 			}
-			else if (auto casted_prop_soft_class = Cast<USoftClassProperty>(prop))
+			else if (auto casted_prop_soft_class = CastField<FSoftClassProperty>(prop))
 			{
 				casted_prop_soft_class->SetPropertyValue_InContainer(buffer, FSoftObjectPtr(ue_obj->ue_object), index);
 				return true;
 			}
-			else if (auto casted_prop_soft_object = Cast<USoftObjectProperty>(prop))
+			else if (auto casted_prop_soft_object = CastField<FSoftObjectProperty>(prop))
 			{
 
 				casted_prop_soft_object->SetPropertyValue_InContainer(buffer, FSoftObjectPtr(ue_obj->ue_object), index);
 
 				return true;
 			}
-			else if (auto casted_prop_weak_object = Cast<UWeakObjectProperty>(prop))
+			else if (auto casted_prop_weak_object = CastField<FWeakObjectProperty>(prop))
 			{
 
 				casted_prop_weak_object->SetPropertyValue_InContainer(buffer, FWeakObjectPtr(ue_obj->ue_object), index);
 
 				return true;
 			}
-			else if (auto casted_prop_base = Cast<UObjectPropertyBase>(prop))
+			else if (auto casted_prop_base = CastField<FObjectPropertyBase>(prop))
 			{
 				// ensure the object type is correct, otherwise crash could happen (soon or later)
 				if (!ue_obj->ue_object->IsA(casted_prop_base->PropertyClass))
@@ -2672,7 +2699,7 @@ bool ue_py_convert_pyobject(PyObject* py_obj, UProperty* prop, uint8* buffer, in
 
 		if (ue_obj->ue_object->IsA<UObject>())
 		{
-			if (auto casted_prop = Cast<UObjectPropertyBase>(prop))
+			if (auto casted_prop = CastField<FObjectPropertyBase>(prop))
 			{
 				// if the property specifies an interface, the object must be of a class that implements it
 				if (casted_prop->PropertyClass->HasAnyClassFlags(CLASS_Interface))
@@ -2691,7 +2718,7 @@ bool ue_py_convert_pyobject(PyObject* py_obj, UProperty* prop, uint8* buffer, in
 
 				return true;
 			}
-			else if (auto casted_prop_soft_object = Cast<USoftObjectProperty>(prop))
+			else if (auto casted_prop_soft_object = CastField<FSoftObjectProperty>(prop))
 			{
 				if (!ue_obj->ue_object->IsA(casted_prop_soft_object->PropertyClass))
 					return false;
@@ -2700,13 +2727,16 @@ bool ue_py_convert_pyobject(PyObject* py_obj, UProperty* prop, uint8* buffer, in
 
 				return true;
 			}
-			else if (auto casted_prop_interface = Cast<UInterfaceProperty>(prop))
+			else if (auto casted_prop_interface = CastField<FInterfaceProperty>(prop))
 			{
 				// ensure the object type is correct, otherwise crash could happen (soon or later)
 				if (!ue_obj->ue_object->GetClass()->ImplementsInterface(casted_prop_interface->InterfaceClass))
 					return false;
 
-				casted_prop_interface->SetPropertyValue_InContainer(buffer, FScriptInterface(ue_obj->ue_object), index);
+				FScriptInterface script_interface(
+					ue_obj->ue_object,
+					ue_obj->ue_object->GetInterfaceAddress(casted_prop_interface->InterfaceClass));
+				casted_prop_interface->SetPropertyValue_InContainer(buffer, script_interface, index);
 
 				return true;
 			}
@@ -2716,7 +2746,7 @@ bool ue_py_convert_pyobject(PyObject* py_obj, UProperty* prop, uint8* buffer, in
 
 	if (py_obj == Py_None)
 	{
-		auto casted_prop_class = Cast<UClassProperty>(prop);
+		auto casted_prop_class = CastField<FClassProperty>(prop);
 		if (casted_prop_class)
 		{
 
@@ -2724,7 +2754,7 @@ bool ue_py_convert_pyobject(PyObject* py_obj, UProperty* prop, uint8* buffer, in
 
 			return true;
 		}
-		auto casted_prop = Cast<UObjectPropertyBase>(prop);
+		auto casted_prop = CastField<FObjectPropertyBase>(prop);
 		if (casted_prop)
 		{
 
@@ -2737,6 +2767,24 @@ bool ue_py_convert_pyobject(PyObject* py_obj, UProperty* prop, uint8* buffer, in
 
 	return false;
 
+}
+
+PyObject* ue_py_new_fproperty_capsule(FProperty* Property)
+{
+	if (!Property)
+	{
+		Py_RETURN_NONE;
+	}
+	return PyCapsule_New(Property, "unreal_engine.FProperty", nullptr);
+}
+
+FProperty* ue_py_get_fproperty_from_capsule(PyObject* Object)
+{
+	if (!PyCapsule_IsValid(Object, "unreal_engine.FProperty"))
+	{
+		return nullptr;
+	}
+	return static_cast<FProperty*>(PyCapsule_GetPointer(Object, "unreal_engine.FProperty"));
 }
 
 
@@ -2879,10 +2927,10 @@ void ue_autobind_events_for_pyclass(ue_PyUObject* u_obj, PyObject* py_class)
 static void py_ue_destroy_params(UFunction* u_function, uint8* buffer)
 {
 	// destroy params
-	TFieldIterator<UProperty> DArgs(u_function);
+	TFieldIterator<FProperty> DArgs(u_function);
 	for (; DArgs && (DArgs->PropertyFlags & CPF_Parm); ++DArgs)
 	{
-		UProperty* prop = *DArgs;
+		FProperty* prop = *DArgs;
 		prop->DestroyValue_InContainer(buffer);
 	}
 }
@@ -2908,9 +2956,9 @@ PyObject* py_ue_ufunction_call(UFunction* u_function, UObject* u_obj, PyObject* 
 	uint8* buffer = (uint8*)FMemory_Alloca(u_function->ParmsSize);
 	FMemory::Memzero(buffer, u_function->ParmsSize);
 	// initialize args
-	for (TFieldIterator<UProperty> IArgs(u_function); IArgs && IArgs->HasAnyPropertyFlags(CPF_Parm); ++IArgs)
+	for (TFieldIterator<FProperty> IArgs(u_function); IArgs && IArgs->HasAnyPropertyFlags(CPF_Parm); ++IArgs)
 	{
-		UProperty* prop = *IArgs;
+		FProperty* prop = *IArgs;
 		if (!prop->HasAnyPropertyFlags(CPF_ZeroConstructor))
 		{
 			prop->InitializeValue_InContainer(buffer);
@@ -2928,11 +2976,11 @@ PyObject* py_ue_ufunction_call(UFunction* u_function, UObject* u_obj, PyObject* 
 			FString default_key_value = u_function->GetMetaData(FName(*default_key));
 			if (!default_key_value.IsEmpty())
 			{
-#if ENGINE_MINOR_VERSION >= 17
-				prop->ImportText(*default_key_value, prop->ContainerPtrToValuePtr<uint8>(buffer), PPF_None, NULL);
-#else
-				prop->ImportText(*default_key_value, prop->ContainerPtrToValuePtr<uint8>(buffer), PPF_Localized, NULL);
-#endif
+				prop->ImportText_Direct(
+					*default_key_value,
+					prop->ContainerPtrToValuePtr<uint8>(buffer),
+					nullptr,
+					PPF_None);
 			}
 #endif
 		}
@@ -2943,10 +2991,10 @@ PyObject* py_ue_ufunction_call(UFunction* u_function, UObject* u_obj, PyObject* 
 
 	int has_out_params = 0;
 
-	TFieldIterator<UProperty> PArgs(u_function);
+	TFieldIterator<FProperty> PArgs(u_function);
 	for (; PArgs && ((PArgs->PropertyFlags & (CPF_Parm | CPF_ReturnParm)) == CPF_Parm); ++PArgs)
 	{
-		UProperty* prop = *PArgs;
+		FProperty* prop = *PArgs;
 		if (argn < tuple_len)
 		{
 			PyObject* py_arg = PyTuple_GetItem(args, argn);
@@ -2974,7 +3022,7 @@ PyObject* py_ue_ufunction_call(UFunction* u_function, UObject* u_obj, PyObject* 
 				}
 			}
 		}
-		if (prop->HasAnyPropertyFlags(CPF_OutParm) && (prop->IsA<UArrayProperty>() || prop->HasAnyPropertyFlags(CPF_ConstParm) == false))
+		if (prop->HasAnyPropertyFlags(CPF_OutParm) && (prop->IsA<FArrayProperty>() || prop->HasAnyPropertyFlags(CPF_ConstParm) == false))
 		{
 			has_out_params++;
 		}
@@ -2991,13 +3039,16 @@ PyObject* py_ue_ufunction_call(UFunction* u_function, UObject* u_obj, PyObject* 
 	PyObject* ret = nullptr;
 
 	int has_ret_param = 0;
-	TFieldIterator<UProperty> Props(u_function);
+	TFieldIterator<FProperty> Props(u_function);
 	for (; Props; ++Props)
 	{
-		UProperty* prop = *Props;
+		FProperty* prop = *Props;
 		if (prop->GetPropertyFlags() & CPF_ReturnParm)
 		{
-			ret = ue_py_convert_property(prop, buffer, 0);
+			// The parameter buffer is destroyed before returning to Python. Generic
+			// structs (including structs nested in containers) therefore need an
+			// owning copy rather than a view into this temporary memory.
+			ret = ue_py_convert_property(prop, buffer, 0, true);
 			if (!ret)
 			{
 				// destroy params
@@ -3016,16 +3067,16 @@ PyObject* py_ue_ufunction_call(UFunction* u_function, UObject* u_obj, PyObject* 
 		{
 			PyTuple_SetItem(multi_ret, 0, ret);
 		}
-		TFieldIterator<UProperty> OProps(u_function);
+		TFieldIterator<FProperty> OProps(u_function);
 		for (; OProps; ++OProps)
 		{
-			UProperty* prop = *OProps;
-			if (prop->HasAnyPropertyFlags(CPF_OutParm) && (prop->IsA<UArrayProperty>() || prop->HasAnyPropertyFlags(CPF_ConstParm) == false))
+			FProperty* prop = *OProps;
+			if (prop->HasAnyPropertyFlags(CPF_OutParm) && (prop->IsA<FArrayProperty>() || prop->HasAnyPropertyFlags(CPF_ConstParm) == false))
 			{
 				// skip return param as it must be always the first
 				if (prop->GetPropertyFlags() & CPF_ReturnParm)
 					continue;
-				PyObject* py_out = ue_py_convert_property(prop, buffer, 0);
+				PyObject* py_out = ue_py_convert_property(prop, buffer, 0, true);
 				if (!py_out)
 				{
 					Py_DECREF(multi_ret);
@@ -3053,7 +3104,7 @@ PyObject* py_ue_ufunction_call(UFunction* u_function, UObject* u_obj, PyObject* 
 
 PyObject* ue_unbind_pyevent(ue_PyUObject* u_obj, FString event_name, PyObject* py_callable, bool fail_on_wrong_property)
 {
-	UProperty* u_property = u_obj->ue_object->GetClass()->FindPropertyByName(FName(*event_name));
+	FProperty* u_property = u_obj->ue_object->GetClass()->FindPropertyByName(FName(*event_name));
 	if (!u_property)
 	{
 		if (fail_on_wrong_property)
@@ -3061,28 +3112,24 @@ PyObject* ue_unbind_pyevent(ue_PyUObject* u_obj, FString event_name, PyObject* p
 		Py_RETURN_NONE;
 	}
 
-	if (auto casted_prop = Cast<UMulticastDelegateProperty>(u_property))
+	if (auto casted_prop = CastField<FMulticastDelegateProperty>(u_property))
 	{
 		UPythonDelegate* py_delegate = FUnrealEnginePythonHouseKeeper::Get()->FindDelegate(u_obj->ue_object, py_callable);
 		if (py_delegate != nullptr)
 		{
-#if ENGINE_MINOR_VERSION < 23
+			FScriptDelegate script_delegate;
+			script_delegate.BindUFunction(py_delegate, FName("PyFakeCallable"));
+#if UEP_LEGACY_ENGINE_MINOR_VERSION < 23
 			FMulticastScriptDelegate multiscript_delegate = casted_prop->GetPropertyValue_InContainer(u_obj->ue_object);
-#else
-			FMulticastScriptDelegate multiscript_delegate = *casted_prop->GetMulticastDelegate(u_obj->ue_object);
-#endif
-
-			multiscript_delegate.Remove(py_delegate, FName("PyFakeCallable"));
-
-			// re-assign multicast delegate
-#if ENGINE_MINOR_VERSION < 23
+			multiscript_delegate.Remove(script_delegate);
 			casted_prop->SetPropertyValue_InContainer(u_obj->ue_object, multiscript_delegate);
 #else
-			casted_prop->SetMulticastDelegate(u_obj->ue_object, multiscript_delegate);
+			void* property_value = casted_prop->ContainerPtrToValuePtr<void>(u_obj->ue_object);
+			casted_prop->RemoveDelegate(script_delegate, u_obj->ue_object, property_value);
 #endif
 		}
 	}
-	else if (auto casted_prop_delegate = Cast<UDelegateProperty>(u_property))
+	else if (auto casted_prop_delegate = CastField<FDelegateProperty>(u_property))
 	{
 		FScriptDelegate script_delegate = casted_prop_delegate->GetPropertyValue_InContainer(u_obj->ue_object);
 		script_delegate.Unbind();
@@ -3102,7 +3149,7 @@ PyObject* ue_unbind_pyevent(ue_PyUObject* u_obj, FString event_name, PyObject* p
 PyObject* ue_bind_pyevent(ue_PyUObject* u_obj, FString event_name, PyObject* py_callable, bool fail_on_wrong_property)
 {
 
-	UProperty* u_property = u_obj->ue_object->GetClass()->FindPropertyByName(FName(*event_name));
+	FProperty* u_property = u_obj->ue_object->GetClass()->FindPropertyByName(FName(*event_name));
 	if (!u_property)
 	{
 		if (fail_on_wrong_property)
@@ -3110,30 +3157,23 @@ PyObject* ue_bind_pyevent(ue_PyUObject* u_obj, FString event_name, PyObject* py_
 		Py_RETURN_NONE;
 	}
 
-	if (auto casted_prop = Cast<UMulticastDelegateProperty>(u_property))
+	if (auto casted_prop = CastField<FMulticastDelegateProperty>(u_property))
 	{
-#if ENGINE_MINOR_VERSION < 23
-		FMulticastScriptDelegate multiscript_delegate = casted_prop->GetPropertyValue_InContainer(u_obj->ue_object);
-#else
-		FMulticastScriptDelegate multiscript_delegate = *casted_prop->GetMulticastDelegate(u_obj->ue_object);
-#endif
-
 		FScriptDelegate script_delegate;
 		UPythonDelegate* py_delegate = FUnrealEnginePythonHouseKeeper::Get()->NewDelegate(u_obj->ue_object, py_callable, casted_prop->SignatureFunction);
 		// fake UFUNCTION for bypassing checks
 		script_delegate.BindUFunction(py_delegate, FName("PyFakeCallable"));
 
-		// add the new delegate
+#if UEP_LEGACY_ENGINE_MINOR_VERSION < 23
+		FMulticastScriptDelegate multiscript_delegate = casted_prop->GetPropertyValue_InContainer(u_obj->ue_object);
 		multiscript_delegate.Add(script_delegate);
-
-		// re-assign multicast delegate
-#if ENGINE_MINOR_VERSION < 23
 		casted_prop->SetPropertyValue_InContainer(u_obj->ue_object, multiscript_delegate);
 #else
-		casted_prop->SetMulticastDelegate(u_obj->ue_object, multiscript_delegate);
+		void* property_value = casted_prop->ContainerPtrToValuePtr<void>(u_obj->ue_object);
+		casted_prop->AddDelegate(script_delegate, u_obj->ue_object, property_value);
 #endif
 	}
-	else if (auto casted_prop_delegate = Cast<UDelegateProperty>(u_property))
+	else if (auto casted_prop_delegate = CastField<FDelegateProperty>(u_property))
 	{
 
 		FScriptDelegate script_delegate = casted_prop_delegate->GetPropertyValue_InContainer(u_obj->ue_object);
@@ -3153,6 +3193,7 @@ PyObject* ue_bind_pyevent(ue_PyUObject* u_obj, FString event_name, PyObject* py_
 	Py_RETURN_NONE;
 }
 
+#if UEP_WITH_DYNAMIC_CLASS_GENERATION
 UFunction* unreal_engine_add_function(UClass* u_class, char* name, PyObject* py_callable, uint32 function_flags)
 {
 
@@ -3171,7 +3212,7 @@ UFunction* unreal_engine_add_function(UClass* u_class, char* name, PyObject* py_
 	UPythonFunction* function = NewObject<UPythonFunction>(u_class, UTF8_TO_TCHAR(name), RF_Public | RF_Transient | RF_MarkAsNative);
 	function->SetPyCallable(py_callable);
 
-#if ENGINE_MINOR_VERSION < 18
+#if UEP_LEGACY_ENGINE_MINOR_VERSION < 18
 	function->RepOffset = MAX_uint16;
 #endif
 	function->ReturnValueOffset = MAX_uint16;
@@ -3206,7 +3247,7 @@ UFunction* unreal_engine_add_function(UClass* u_class, char* name, PyObject* py_
 	PyObject* annotations = PyObject_GetAttrString(py_callable, "__annotations__");
 
 	UField** next_property = &function->Children;
-	UProperty** next_property_link = &function->PropertyLink;
+	FProperty** next_property_link = &function->PropertyLink;
 
 	PyObject* parameters_keys = PyObject_GetIter(parameters);
 	// do not process args if no annotations are available
@@ -3229,65 +3270,65 @@ UFunction* unreal_engine_add_function(UClass* u_class, char* name, PyObject* py_
 		if (!value)
 			continue;
 
-		UProperty* prop = nullptr;
+		FProperty* prop = nullptr;
 		if (PyType_Check(value))
 		{
 			if ((PyTypeObject*)value == &PyFloat_Type)
 			{
-				prop = NewObject<UFloatProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
+				prop = NewObject<FFloatProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
 			}
 			else if ((PyTypeObject*)value == &PyUnicode_Type)
 			{
-				prop = NewObject<UStrProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
+				prop = NewObject<FStrProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
 			}
 			else if ((PyTypeObject*)value == &PyBool_Type)
 			{
-				prop = NewObject<UBoolProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
+				prop = NewObject<FBoolProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
 			}
 			else if ((PyTypeObject*)value == &PyLong_Type)
 			{
-				prop = NewObject<UIntProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
+				prop = NewObject<FIntProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
 			}
 			else if ((PyTypeObject*)value == &ue_PyFVectorType)
 			{
-				UStructProperty* prop_struct = NewObject<UStructProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
+				FStructProperty* prop_struct = NewObject<FStructProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
 				prop_struct->Struct = TBaseStructure<FVector>::Get();
 				prop = prop_struct;
 			}
 			else if ((PyTypeObject*)value == &ue_PyFVector2DType)
 			{
-				UStructProperty* prop_struct = NewObject<UStructProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
+				FStructProperty* prop_struct = NewObject<FStructProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
 				prop_struct->Struct = TBaseStructure<FVector2D>::Get();
 				prop = prop_struct;
 			}
 			else if ((PyTypeObject*)value == &ue_PyFRotatorType)
 			{
-				UStructProperty* prop_struct = NewObject<UStructProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
+				FStructProperty* prop_struct = NewObject<FStructProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
 				prop_struct->Struct = TBaseStructure<FRotator>::Get();
 				prop = prop_struct;
 			}
 			else if ((PyTypeObject*)value == &ue_PyFLinearColorType)
 			{
-				UStructProperty* prop_struct = NewObject<UStructProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
+				FStructProperty* prop_struct = NewObject<FStructProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
 				prop_struct->Struct = TBaseStructure<FLinearColor>::Get();
 				prop = prop_struct;
 			}
 			else if ((PyTypeObject*)value == &ue_PyFColorType)
 			{
-				UStructProperty* prop_struct = NewObject<UStructProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
+				FStructProperty* prop_struct = NewObject<FStructProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
 				prop_struct->Struct = TBaseStructure<FColor>::Get();
 				prop = prop_struct;
 			}
 			else if ((PyTypeObject*)value == &ue_PyFTransformType)
 			{
-				UStructProperty* prop_struct = NewObject<UStructProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
+				FStructProperty* prop_struct = NewObject<FStructProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
 				prop_struct->Struct = TBaseStructure<FTransform>::Get();
 				prop = prop_struct;
 			}
-#if ENGINE_MINOR_VERSION > 18
+#if UEP_LEGACY_ENGINE_MINOR_VERSION > 18
 			else if ((PyTypeObject*)value == &ue_PyFQuatType)
 			{
-				UStructProperty* prop_struct = NewObject<UStructProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
+				FStructProperty* prop_struct = NewObject<FStructProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
 				prop_struct->Struct = TBaseStructure<FQuat>::Get();
 				prop = prop_struct;
 			}
@@ -3321,7 +3362,7 @@ UFunction* unreal_engine_add_function(UClass* u_class, char* name, PyObject* py_
 					UE_LOG(LogPython, Error, TEXT("type for %s must be a UClass"), UTF8_TO_TCHAR(name));
 					return nullptr;
 				}
-				UClassProperty* prop_class = NewObject<UClassProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
+				FClassProperty* prop_class = NewObject<FClassProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
 				prop_class->SetMetaClass((UClass*)py_obj->ue_object);
 				prop_class->PropertyClass = UClass::StaticClass();
 				prop = prop_class;
@@ -3333,15 +3374,15 @@ UFunction* unreal_engine_add_function(UClass* u_class, char* name, PyObject* py_
 			if (py_obj->ue_object->IsA<UClass>())
 			{
 				UClass* p_u_class = (UClass*)py_obj->ue_object;
-				UObjectProperty* prop_base = NewObject<UObjectProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
+				FObjectProperty* prop_base = NewObject<FObjectProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
 				prop_base->SetPropertyClass(p_u_class);
 				prop = prop_base;
 			}
-#if ENGINE_MINOR_VERSION > 17
+#if UEP_LEGACY_ENGINE_MINOR_VERSION > 17
 			else if (py_obj->ue_object->IsA<UEnum>())
 			{
-				UEnumProperty* prop_enum = NewObject<UEnumProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
-				UNumericProperty* prop_underlying = NewObject<UByteProperty>(prop_enum, TEXT("UnderlyingType"), RF_Public);
+				FEnumProperty* prop_enum = NewObject<FEnumProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
+				FNumericProperty* prop_underlying = NewObject<FByteProperty>(prop_enum, TEXT("UnderlyingType"), RF_Public);
 				prop_enum->SetEnum((UEnum*)py_obj->ue_object);
 				prop_enum->AddCppProperty(prop_underlying);
 				prop = prop_enum;
@@ -3349,7 +3390,7 @@ UFunction* unreal_engine_add_function(UClass* u_class, char* name, PyObject* py_
 #endif
 			else if (py_obj->ue_object->IsA<UStruct>())
 			{
-				UStructProperty* prop_struct = NewObject<UStructProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
+				FStructProperty* prop_struct = NewObject<FStructProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
 				prop_struct->Struct = (UScriptStruct*)py_obj->ue_object;
 				prop = prop_struct;
 			}
@@ -3377,66 +3418,66 @@ UFunction* unreal_engine_add_function(UClass* u_class, char* name, PyObject* py_
 		if (py_return_value)
 		{
 			UE_LOG(LogPython, Warning, TEXT("Return Value found"));
-			UProperty* prop = nullptr;
+			FProperty* prop = nullptr;
 			char* p_name = (char*) "ReturnValue";
 			if (PyType_Check(py_return_value))
 			{
 				if ((PyTypeObject*)py_return_value == &PyFloat_Type)
 				{
-					prop = NewObject<UFloatProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
+					prop = NewObject<FFloatProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
 				}
 				else if ((PyTypeObject*)py_return_value == &PyUnicode_Type)
 				{
-					prop = NewObject<UStrProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
+					prop = NewObject<FStrProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
 				}
 				else if ((PyTypeObject*)py_return_value == &PyBool_Type)
 				{
-					prop = NewObject<UBoolProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
+					prop = NewObject<FBoolProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
 				}
 				else if ((PyTypeObject*)py_return_value == &PyLong_Type)
 				{
-					prop = NewObject<UIntProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
+					prop = NewObject<FIntProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
 				}
 				else if ((PyTypeObject*)py_return_value == &ue_PyFVectorType)
 				{
-					UStructProperty* prop_struct = NewObject<UStructProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
+					FStructProperty* prop_struct = NewObject<FStructProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
 					prop_struct->Struct = TBaseStructure<FVector>::Get();
 					prop = prop_struct;
 				}
 				else if ((PyTypeObject*)py_return_value == &ue_PyFVector2DType)
 				{
-					UStructProperty* prop_struct = NewObject<UStructProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
+					FStructProperty* prop_struct = NewObject<FStructProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
 					prop_struct->Struct = TBaseStructure<FVector2D>::Get();
 					prop = prop_struct;
 				}
 				else if ((PyTypeObject*)py_return_value == &ue_PyFRotatorType)
 				{
-					UStructProperty* prop_struct = NewObject<UStructProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
+					FStructProperty* prop_struct = NewObject<FStructProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
 					prop_struct->Struct = TBaseStructure<FRotator>::Get();
 					prop = prop_struct;
 				}
 				else if ((PyTypeObject*)py_return_value == &ue_PyFLinearColorType)
 				{
-					UStructProperty* prop_struct = NewObject<UStructProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
+					FStructProperty* prop_struct = NewObject<FStructProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
 					prop_struct->Struct = TBaseStructure<FLinearColor>::Get();
 					prop = prop_struct;
 				}
 				else if ((PyTypeObject*)py_return_value == &ue_PyFColorType)
 				{
-					UStructProperty* prop_struct = NewObject<UStructProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
+					FStructProperty* prop_struct = NewObject<FStructProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
 					prop_struct->Struct = TBaseStructure<FColor>::Get();
 					prop = prop_struct;
 				}
 				else if ((PyTypeObject*)py_return_value == &ue_PyFTransformType)
 				{
-					UStructProperty* prop_struct = NewObject<UStructProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
+					FStructProperty* prop_struct = NewObject<FStructProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
 					prop_struct->Struct = TBaseStructure<FTransform>::Get();
 					prop = prop_struct;
 				}
-#if ENGINE_MINOR_VERSION > 18
+#if UEP_LEGACY_ENGINE_MINOR_VERSION > 18
 				else if ((PyTypeObject*)py_return_value == &ue_PyFQuatType)
 				{
-					UStructProperty* prop_struct = NewObject<UStructProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
+					FStructProperty* prop_struct = NewObject<FStructProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
 					prop_struct->Struct = TBaseStructure<FQuat>::Get();
 					prop = prop_struct;
 				}
@@ -3470,7 +3511,7 @@ UFunction* unreal_engine_add_function(UClass* u_class, char* name, PyObject* py_
 						UE_LOG(LogPython, Error, TEXT("type for %s must be a UClass"), UTF8_TO_TCHAR(name));
 						return nullptr;
 					}
-					UClassProperty* prop_class = NewObject<UClassProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
+					FClassProperty* prop_class = NewObject<FClassProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
 					prop_class->SetMetaClass((UClass*)py_obj->ue_object);
 					prop_class->PropertyClass = UClass::StaticClass();
 					prop = prop_class;
@@ -3482,15 +3523,15 @@ UFunction* unreal_engine_add_function(UClass* u_class, char* name, PyObject* py_
 				if (py_obj->ue_object->IsA<UClass>())
 				{
 					UClass* p_u_class = (UClass*)py_obj->ue_object;
-					UObjectProperty* prop_base = NewObject<UObjectProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
+					FObjectProperty* prop_base = NewObject<FObjectProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
 					prop_base->SetPropertyClass(p_u_class);
 					prop = prop_base;
 				}
-#if ENGINE_MINOR_VERSION > 17
+#if UEP_LEGACY_ENGINE_MINOR_VERSION > 17
 				else if (py_obj->ue_object->IsA<UEnum>())
 				{
-					UEnumProperty* prop_enum = NewObject<UEnumProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
-					UNumericProperty* prop_underlying = NewObject<UByteProperty>(prop_enum, TEXT("UnderlyingType"), RF_Public);
+					FEnumProperty* prop_enum = NewObject<FEnumProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
+					FNumericProperty* prop_underlying = NewObject<FByteProperty>(prop_enum, TEXT("UnderlyingType"), RF_Public);
 					prop_enum->SetEnum((UEnum*)py_obj->ue_object);
 					prop_enum->AddCppProperty(prop_underlying);
 					prop = prop_enum;
@@ -3498,7 +3539,7 @@ UFunction* unreal_engine_add_function(UClass* u_class, char* name, PyObject* py_
 #endif
 				else if (py_obj->ue_object->IsA<UStruct>())
 				{
-					UStructProperty* prop_struct = NewObject<UStructProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
+					FStructProperty* prop_struct = NewObject<FStructProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
 					prop_struct->Struct = (UScriptStruct*)py_obj->ue_object;
 					prop = prop_struct;
 				}
@@ -3528,33 +3569,33 @@ UFunction* unreal_engine_add_function(UClass* u_class, char* name, PyObject* py_
 
 		if (!function->IsSignatureCompatibleWith(parent_function))
 		{
-			TFieldIterator<UProperty> It(parent_function);
+			TFieldIterator<FProperty> It(parent_function);
 			while (It)
 			{
-				UProperty* p = *It;
+				FProperty* p = *It;
 				if (p->PropertyFlags & CPF_Parm)
 				{
 					UE_LOG(LogPython, Warning, TEXT("Parent PROP: %s %d/%d %d %d %d %s %p"), *p->GetName(), (int)p->PropertyFlags, (int)UFunction::GetDefaultIgnoredSignatureCompatibilityFlags(), (int)(p->PropertyFlags & ~UFunction::GetDefaultIgnoredSignatureCompatibilityFlags()), p->GetSize(), p->GetOffset_ForGC(), *p->GetClass()->GetName(), p->GetClass());
-					UClassProperty* ucp = Cast<UClassProperty>(p);
+					FClassProperty* ucp = CastField<FClassProperty>(p);
 					if (ucp)
 					{
-						UE_LOG(LogPython, Warning, TEXT("Parent UClassProperty = %p %s %p %s"), ucp->PropertyClass, *ucp->PropertyClass->GetName(), ucp->MetaClass, *ucp->MetaClass->GetName());
+						UE_LOG(LogPython, Warning, TEXT("Parent FClassProperty = %p %s %p %s"), ucp->PropertyClass, *ucp->PropertyClass->GetName(), ucp->MetaClass, *ucp->MetaClass->GetName());
 					}
 				}
 				++It;
 			}
 
-			TFieldIterator<UProperty> It2(function);
+			TFieldIterator<FProperty> It2(function);
 			while (It2)
 			{
-				UProperty* p = *It2;
+				FProperty* p = *It2;
 				if (p->PropertyFlags & CPF_Parm)
 				{
 					UE_LOG(LogPython, Warning, TEXT("Function PROP: %s %d/%d %d %d %d %s %p"), *p->GetName(), (int)p->PropertyFlags, (int)UFunction::GetDefaultIgnoredSignatureCompatibilityFlags(), (int)(p->PropertyFlags & ~UFunction::GetDefaultIgnoredSignatureCompatibilityFlags()), p->GetSize(), p->GetOffset_ForGC(), *p->GetClass()->GetName(), p->GetClass());
-					UClassProperty* ucp = Cast<UClassProperty>(p);
+					FClassProperty* ucp = CastField<FClassProperty>(p);
 					if (ucp)
 					{
-						UE_LOG(LogPython, Warning, TEXT("Function UClassProperty = %p %s %p %s"), ucp->PropertyClass, *ucp->PropertyClass->GetName(), ucp->MetaClass, *ucp->MetaClass->GetName());
+						UE_LOG(LogPython, Warning, TEXT("Function FClassProperty = %p %s %p %s"), ucp->PropertyClass, *ucp->PropertyClass->GetName(), ucp->MetaClass, *ucp->MetaClass->GetName());
 					}
 				}
 				++It2;
@@ -3568,10 +3609,10 @@ UFunction* unreal_engine_add_function(UClass* u_class, char* name, PyObject* py_
 	function->NumParms = 0;
 
 	// allocate properties storage (ignore super)
-	TFieldIterator<UProperty> props(function, EFieldIteratorFlags::ExcludeSuper);
+	TFieldIterator<FProperty> props(function, EFieldIteratorFlags::ExcludeSuper);
 	for (; props; ++props)
 	{
-		UProperty* p = *props;
+		FProperty* p = *props;
 		if (p->HasAnyPropertyFlags(CPF_Parm))
 		{
 			function->NumParms++;
@@ -3593,13 +3634,13 @@ UFunction* unreal_engine_add_function(UClass* u_class, char* name, PyObject* py_
 	}
 
 
-#if ENGINE_MINOR_VERSION >= 17
+#if UEP_LEGACY_ENGINE_MINOR_VERSION >= 17
 	function->FunctionFlags = (EFunctionFlags)function_flags;
 #else
 	function->FunctionFlags = function_flags;
 #endif
 
-#if ENGINE_MINOR_VERSION > 18
+#if UEP_LEGACY_ENGINE_MINOR_VERSION > 18
 	function->SetNativeFunc((FNativeFuncPtr)& UPythonFunction::CallPythonCallable);
 #else
 	function->SetNativeFunc((Native)& UPythonFunction::CallPythonCallable);
@@ -3610,7 +3651,7 @@ UFunction* unreal_engine_add_function(UClass* u_class, char* name, PyObject* py_
 
 
 	u_class->Children = function;
-#if ENGINE_MINOR_VERSION < 18
+#if UEP_LEGACY_ENGINE_MINOR_VERSION < 18
 	u_class->AddFunctionToFunctionMap(function);
 #else
 	u_class->AddFunctionToFunctionMap(function, function->GetFName());
@@ -3644,6 +3685,13 @@ UFunction* unreal_engine_add_function(UClass* u_class, char* name, PyObject* py_
 
 	return function;
 }
+#else
+UFunction* unreal_engine_add_function(UClass* u_class, char* name, PyObject* py_callable, uint32 function_flags)
+{
+	UE_LOG(LogPython, Warning, TEXT("Dynamic UFunction generation is not available in the UE5.8 core port"));
+	return nullptr;
+}
+#endif
 
 FGuid* ue_py_check_fguid(PyObject* py_obj)
 {
@@ -3653,7 +3701,7 @@ FGuid* ue_py_check_fguid(PyObject* py_obj)
 		return nullptr;
 	}
 
-	if (ue_py_struct->u_struct == FindObject<UScriptStruct>(ANY_PACKAGE, UTF8_TO_TCHAR((char*)"Guid")))
+	if (ue_py_struct->u_struct == ue_py_find_first_object<UScriptStruct>(TEXT("Guid")))
 	{
 		return (FGuid*)ue_py_struct->u_struct_ptr;
 	}

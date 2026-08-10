@@ -45,12 +45,13 @@ static PyObject *py_ue_fhitresult_get_time(ue_PyFHitResult *self, void *closure)
 
 static PyObject *py_ue_fhitresult_get_bone_name(ue_PyFHitResult *self, void *closure)
 {
-	return PyUnicode_FromString(TCHAR_TO_UTF8(*self->hit.BoneName.ToString()));
+	const FString BoneName = self->hit.BoneName.ToString();
+	return PyUnicode_FromString(TCHAR_TO_UTF8(*BoneName));
 }
 
 static PyObject *py_ue_fhitresult_get_actor(ue_PyFHitResult *self, void *closure)
 {
-	AActor *actor = self->hit.Actor.Get();
+	AActor *actor = self->hit.GetActor();
 	if (!actor)
 	{
 		Py_RETURN_NONE;

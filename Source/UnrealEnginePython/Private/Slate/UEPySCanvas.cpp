@@ -42,7 +42,7 @@ static PyObject *py_ue_scanvas_add_slot(ue_PySCanvas *self, PyObject * args, PyO
 	if (!child.IsValid())
 		return nullptr;
 
-	SCanvas::FSlot &fslot = py_SCanvas->AddSlot();
+	auto fslot = py_SCanvas->AddSlot();
 	fslot.AttachWidget(child.ToSharedRef());
 	fslot.HAlign((EHorizontalAlignment)h_align);
 	fslot.VAlign((EVerticalAlignment)v_align);

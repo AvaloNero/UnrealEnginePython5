@@ -78,11 +78,11 @@ FReply SPythonEditableText::OnMouseWheel(const FGeometry& MyGeometry, const FPoi
 	{
 		if (InPointerEvent.GetWheelDelta() > 0)
 		{
-			CurrentScale += 0.1;
+			CurrentScale += 0.1f;
 		}
 		else if (InPointerEvent.GetWheelDelta() < 0)
 		{
-			CurrentScale -= 0.1;
+			CurrentScale -= 0.1f;
 		}
 
 		if (CurrentScale < 1)

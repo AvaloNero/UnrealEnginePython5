@@ -1,15 +1,15 @@
 {
 	"FileVersion": 3,
-	"Version": 1,
-	"VersionName": "1.0",
+	"Version": 100,
+	"VersionName": "0.1.0",
 	"FriendlyName": "UnrealEnginePython",
-	"Description": "Embed a Python VM in your project",
+	"Description": "Unreal Engine 5.8 and CPython 3.11 bindings and runtime integration",
 	"Category": "Scripting Languages",
 	"CreatedBy": "Roberto De Ioris",
 	"CreatedByURL": "",
-	"DocsURL": "",
+	"DocsURL": "https://github.com/AvaloNero/UnrealEnginePython5#readme",
 	"MarketplaceURL": "",
-	"SupportURL": "",
+	"SupportURL": "https://github.com/AvaloNero/UnrealEnginePython5/issues",
 	"EnabledByDefault": true,
 	"CanContainContent": true,
 	"IsBetaVersion": true,
@@ -23,17 +23,17 @@
     {
       "Name": "PythonAutomation",
       "Type": "Editor",
-      "LoadingPhase": "PostDefault"
+      "LoadingPhase": "PostEngineInit"
     },
     {
       "Name": "PythonConsole",
       "Type": "Editor",
-      "LoadingPhase": "PostDefault"
+      "LoadingPhase": "PostEngineInit"
     },
     {
       "Name": "PythonEditor",
       "Type": "Editor",
-      "LoadingPhase": "PostDefault"
+      "LoadingPhase": "PostEngineInit"
     }
   ],
   "Plugins": [

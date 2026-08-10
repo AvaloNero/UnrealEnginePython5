@@ -163,7 +163,7 @@ void FPythonSmartHttpDelegate::OnRequestComplete(FHttpRequestPtr request, FHttpR
 	Py_DECREF(ret);
 }
 
-void FPythonSmartHttpDelegate::OnRequestProgress(FHttpRequestPtr request, int32 sent, int32 received)
+void FPythonSmartHttpDelegate::OnRequestProgress(FHttpRequestPtr request, uint64 sent, uint64 received)
 {
 	FScopePythonGIL gil;
 
@@ -173,7 +173,8 @@ void FPythonSmartHttpDelegate::OnRequestProgress(FHttpRequestPtr request, int32 
 		return;
 	}
 
-	PyObject *ret = PyObject_CallFunction(py_callable, (char *)"Oii", py_http_request, sent, received);
+	PyObject *ret = PyObject_CallFunction(py_callable, (char *)"OKK", py_http_request,
+		static_cast<unsigned long long>(sent), static_cast<unsigned long long>(received));
 	if (!ret)
 	{
 		unreal_engine_py_log_error();
@@ -225,7 +226,8 @@ static PyObject *py_ue_ihttp_request_bind_on_request_progress(ue_PyIHttpRequest 
 	py_delegate->SetPyCallable(py_callable);
 	// this trick avoids generating a new python object
 	py_delegate->SetPyHttpRequest(self);
-	self->http_request->OnRequestProgress().BindSP(py_delegate, &FPythonSmartHttpDelegate::OnRequestProgress);
+	self->http_request->OnRequestProgress64().BindSP(py_delegate, &FPythonSmartHttpDelegate::OnRequestProgress);
+	self->on_request_progress = py_delegate;
 
 	Py_RETURN_NONE;
 }

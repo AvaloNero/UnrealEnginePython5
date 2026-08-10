@@ -7,6 +7,7 @@
 
 #include "LevelEditor.h"
 #include "Editor/LevelEditor/Public/ILevelEditor.h"
+#include "AssetEditorViewportLayout.h"
 
 static PyObject *py_ue_slevel_viewport_get_world(ue_PySLevelViewport *self, PyObject * args)
 {
@@ -135,10 +136,44 @@ static int ue_py_slevel_viewport_init(ue_PySLevelViewport *self, PyObject *args,
 
 	arguments.ParentLevelEditor(EditorModule.GetFirstLevelEditor().ToSharedRef());
 
-	ue_py_slate_farguments_optional_bool("realtime", Realtime);
-	ue_py_slate_farguments_optional_enum("viewport_type", ViewportType, ELevelViewportType);
+	bool has_realtime = false;
+	bool realtime = false;
+	if (PyObject *value = ue_py_dict_get_item(kwargs, "realtime"))
+	{
+		const int truth_value = PyObject_IsTrue(value);
+		if (truth_value < 0)
+			return -1;
+		has_realtime = true;
+		realtime = truth_value > 0;
+	}
 
-	ue_py_snew(SLevelViewport);
+	bool has_viewport_type = false;
+	ELevelViewportType viewport_type = LVT_Perspective;
+	if (PyObject *value = ue_py_dict_get_item(kwargs, "viewport_type"))
+	{
+		if (!PyNumber_Check(value))
+		{
+			PyErr_SetString(PyExc_TypeError, "unsupported type for attribute viewport_type");
+			return -1;
+		}
+		PyObject *py_int = PyNumber_Long(value);
+		if (!py_int)
+			return -1;
+		const long raw_viewport_type = PyLong_AsLong(py_int);
+		Py_DECREF(py_int);
+		if (PyErr_Occurred())
+			return -1;
+		has_viewport_type = true;
+		viewport_type = static_cast<ELevelViewportType>(raw_viewport_type);
+	}
+
+	FAssetEditorViewportConstructionArgs construction_args;
+	if (has_realtime)
+		construction_args.bRealtime = realtime;
+	if (has_viewport_type)
+		construction_args.ViewportType = viewport_type;
+
+	ue_py_snew_with_args(SLevelViewport, construction_args);
 	ue_py_slate_cast(SLevelViewport);
 
 	EditorModule.GetFirstLevelEditor()->AddStandaloneLevelViewport(py_SLevelViewport);

@@ -6,6 +6,7 @@
 #include "Editor/WorkspaceMenuStructure/Public/WorkspaceMenuStructureModule.h"
 #include "Runtime/Slate/Public/Widgets/Docking/SDockTab.h"
 #include "Editor/WorkspaceMenuStructure/Public/WorkspaceMenuStructure.h"
+#include "Styling/AppStyle.h"
 
 IMPLEMENT_MODULE( FPythonConsoleModule, PythonConsole );
 
@@ -22,7 +23,6 @@ public:
 	FPythonLogHistory()
 	{
 		GLog->AddOutputDevice(this);
-		GLog->SerializeBacklog(this);
 	}
 
 	~FPythonLogHistory()
@@ -60,7 +60,6 @@ static TSharedPtr<FPythonLogHistory> PythonLogHistory;
 TSharedRef<SDockTab> SpawnPythonLog( const FSpawnTabArgs& Args )
 {
 	return SNew(SDockTab)
-		.Icon(FEditorStyle::GetBrush("Log.TabIcon"))
 		.TabRole( ETabRole::NomadTab )
 		.Label( NSLOCTEXT("PythonConsole", "TabTitle", "Python Console") )
 		[
@@ -74,7 +73,7 @@ void FPythonConsoleModule::StartupModule()
 		.SetDisplayName(NSLOCTEXT("UnrealEditor", "PythonLogTab", "Python Console"))
 		.SetTooltipText(NSLOCTEXT("UnrealEditor", "PythonLogTooltipText", "Open the Python Console tab."))
 		.SetGroup( WorkspaceMenu::GetMenuStructure().GetDeveloperToolsLogCategory() )
-		.SetIcon( FSlateIcon(FEditorStyle::GetStyleSetName(), "Log.TabIcon") );
+		.SetIcon( FSlateIcon(FAppStyle::GetAppStyleSetName(), "Log.TabIcon") );
 
 	
 	PythonLogHistory = MakeShareable(new FPythonLogHistory);
@@ -82,6 +81,8 @@ void FPythonConsoleModule::StartupModule()
 
 void FPythonConsoleModule::ShutdownModule()
 {
+	PythonLogHistory.Reset();
+
 	if (FSlateApplication::IsInitialized())
 	{
 		FGlobalTabmanager::Get()->UnregisterNomadTabSpawner(PythonConsoleModule::PythonLogTabName);

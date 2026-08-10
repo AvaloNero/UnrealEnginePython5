@@ -9,9 +9,9 @@ class FPythonOutputDevice : FOutputDevice
 
 public:
 	FPythonOutputDevice()
+		: py_serialize(nullptr)
 	{
 		GLog->AddOutputDevice(this);
-		GLog->SerializeBacklog(this);
 	}
 
 	~FPythonOutputDevice()
@@ -20,7 +20,12 @@ public:
 		{
 			GLog->RemoveOutputDevice(this);
 		}
-		Py_XDECREF(py_serialize);
+		if (Py_IsInitialized())
+		{
+			FScopePythonGIL gil;
+			Py_XDECREF(py_serialize);
+		}
+		py_serialize = nullptr;
 	}
 
 	void SetPySerialize(PyObject *py_callable)

@@ -1,7 +1,7 @@
 #include "UEPySFilePathPicker.h"
 
 #if WITH_EDITOR
-#if ENGINE_MINOR_VERSION > 13
+#if UEP_LEGACY_ENGINE_MINOR_VERSION > 13
 
 static PyMethodDef ue_PySFilePathPicker_methods[] = {
 	{ NULL }  /* Sentinel */

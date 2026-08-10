@@ -3,7 +3,7 @@
 #include "UEPySCompoundWidget.h"
 
 #if WITH_EDITOR
-#if ENGINE_MINOR_VERSION > 13
+#if UEP_LEGACY_ENGINE_MINOR_VERSION > 13
 #include "Developer/DesktopWidgets/Public/Widgets/Input/SFilePathPicker.h"
 
 extern PyTypeObject ue_PySFilePathPickerType;

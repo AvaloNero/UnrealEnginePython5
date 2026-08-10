@@ -485,11 +485,11 @@ ue_PySWidget *ue_py_get_swidget(TSharedRef<SWidget> s_widget);
 	}\
 }
 
-#define ue_py_slate_setup_hack_slot_args(_type, _swidget_ref) _type::FSlot &arguments = _swidget_ref->AddSlot();\
+#define ue_py_slate_setup_hack_slot_args(_type, _swidget_ref) auto arguments = _swidget_ref->AddSlot();\
 	TArray<TSharedRef<FPythonSlateDelegate>> DeferredSlateDelegates;\
     ue_py_slate_farguments_required_slot("widget");
 
-#define ue_py_slate_setup_hack_slot_args_grid(_type, _swidget_ref, column, row, layer) _type::FSlot &arguments = _swidget_ref->AddSlot(column, row, layer);\
+#define ue_py_slate_setup_hack_slot_args_grid(_type, _swidget_ref, column, row, layer) auto arguments = _swidget_ref->AddSlot(column, row, layer);\
 	TArray<TSharedRef<FPythonSlateDelegate>> DeferredSlateDelegates;\
     ue_py_slate_farguments_required_slot("widget");
 

@@ -62,7 +62,7 @@ PyObject *py_ue_actor_begin_play(ue_PyUObject * self, PyObject * args)
 
 	Py_BEGIN_ALLOW_THREADS;
 
-#if ENGINE_MINOR_VERSION > 14
+#if UEP_LEGACY_ENGINE_MINOR_VERSION > 14
 	actor->DispatchBeginPlay();
 #else
 	actor->BeginPlay();
@@ -135,7 +135,7 @@ PyObject *py_ue_actor_destroy_component(ue_PyUObject * self, PyObject * args)
 		return PyErr_Format(PyExc_Exception, "argument is not a UActorComponent");
 
 	Py_BEGIN_ALLOW_THREADS
-#if ENGINE_MINOR_VERSION >= 17
+#if UEP_LEGACY_ENGINE_MINOR_VERSION >= 17
 		component->DestroyComponent();
 #else
 		actor->K2_DestroyComponent(component);
@@ -649,7 +649,7 @@ PyObject *py_ue_actor_create_default_subobject(ue_PyUObject * self, PyObject * a
 	UObject *ret_obj = nullptr;
 
 	Py_BEGIN_ALLOW_THREADS;
-	ret_obj = actor->CreateDefaultSubobject(FName(UTF8_TO_TCHAR(name)), UObject::StaticClass(), u_class, false, false, true);
+	ret_obj = actor->CreateDefaultSubobject(FName(UTF8_TO_TCHAR(name)), UObject::StaticClass(), u_class, false, true);
 	Py_END_ALLOW_THREADS;
 
 	if (!ret_obj)
@@ -741,7 +741,7 @@ PyObject *py_ue_actor_has_component_of_type(ue_PyUObject * self, PyObject * args
 		Py_RETURN_TRUE;
 	}
 
-	Py_RETURN_TRUE;
+	Py_RETURN_FALSE;
 }
 
 PyObject *py_ue_get_actor_component_by_type(ue_PyUObject * self, PyObject * args)
@@ -792,10 +792,14 @@ PyObject *py_ue_get_actor_components_by_type(ue_PyUObject * self, PyObject * arg
 	UClass *u_class = ue_py_check_type<UClass>(obj);
 	if (!u_class)
 		return PyErr_Format(PyExc_Exception, "argument is not a UClass");
+	if (!u_class->IsChildOf(UActorComponent::StaticClass()))
+		return PyErr_Format(PyExc_Exception, "argument is not a UActorComponent class");
 
 	PyObject *components = PyList_New(0);
+	TArray<UActorComponent *> ActorComponents;
+	actor->GetComponents(TSubclassOf<UActorComponent>(u_class), ActorComponents);
 
-	for (UActorComponent *component : actor->GetComponentsByClass(u_class))
+	for (UActorComponent *component : ActorComponents)
 	{
 		ue_PyUObject *item = ue_get_python_uobject(component);
 		if (item)

@@ -6,7 +6,7 @@
 
 #include "Editor/MaterialEditor/Public/MaterialEditorUtilities.h"
 #include "Editor/MaterialEditor/Public/MaterialEditorActions.h"
-#include "Editor/UnrealEd/Public/Toolkits/AssetEditorManager.h"
+#include "Subsystems/AssetEditorSubsystem.h"
 #include "Editor/MaterialEditor/Public/IMaterialEditor.h"
 
 typedef struct

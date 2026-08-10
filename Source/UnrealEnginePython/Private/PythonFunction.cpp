@@ -10,7 +10,7 @@ void UPythonFunction::SetPyCallable(PyObject *callable)
 }
 
 
-#if ENGINE_MINOR_VERSION > 18
+#if UEP_LEGACY_ENGINE_MINOR_VERSION > 18
 void UPythonFunction::CallPythonCallable(UObject *Context, FFrame& Stack, RESULT_DECL)
 #else
 void UPythonFunction::CallPythonCallable(FFrame& Stack, RESULT_DECL)
@@ -19,7 +19,7 @@ void UPythonFunction::CallPythonCallable(FFrame& Stack, RESULT_DECL)
 
 	FScopePythonGIL gil;
 
-#if ENGINE_MINOR_VERSION <= 18
+#if UEP_LEGACY_ENGINE_MINOR_VERSION <= 18
 	UObject *Context = Stack.Object;
 #endif
 
@@ -30,7 +30,7 @@ void UPythonFunction::CallPythonCallable(FFrame& Stack, RESULT_DECL)
 
 	// count the number of arguments
 	Py_ssize_t argn = (Context && !is_static) ? 1 : 0;
-	TFieldIterator<UProperty> IArgs(function);
+	TFieldIterator<FProperty> IArgs(function);
 	for (; IArgs && ((IArgs->PropertyFlags & (CPF_Parm | CPF_ReturnParm)) == CPF_Parm); ++IArgs) {
 		argn++;
 	}
@@ -56,7 +56,10 @@ void UPythonFunction::CallPythonCallable(FFrame& Stack, RESULT_DECL)
 
 	// is it a blueprint call ?
 	if (*Stack.Code == EX_EndFunctionParms) {
-		for (UProperty *prop = (UProperty *)function->Children; prop; prop = (UProperty *)prop->Next) {
+		for (TFieldIterator<FProperty> PropIt(function); PropIt; ++PropIt) {
+			FProperty* prop = *PropIt;
+			if (!prop->HasAnyPropertyFlags(CPF_Parm))
+				continue;
 			if (prop->PropertyFlags & CPF_ReturnParm)
 				continue;
 			if (!on_error) {
@@ -75,7 +78,10 @@ void UPythonFunction::CallPythonCallable(FFrame& Stack, RESULT_DECL)
 		//UE_LOG(LogPython, Warning, TEXT("BLUEPRINT CALL"));
 		frame = (uint8 *)FMemory_Alloca(function->PropertiesSize);
 		FMemory::Memzero(frame, function->PropertiesSize);
-		for (UProperty *prop = (UProperty *)function->Children; *Stack.Code != EX_EndFunctionParms; prop = (UProperty *)prop->Next) {
+		for (TFieldIterator<FProperty> PropIt(function); PropIt && *Stack.Code != EX_EndFunctionParms; ++PropIt) {
+			FProperty* prop = *PropIt;
+			if (!prop->HasAnyPropertyFlags(CPF_Parm))
+				continue;
 			Stack.Step(Stack.Object, prop->ContainerPtrToValuePtr<uint8>(frame));
 			if (prop->PropertyFlags & CPF_ReturnParm)
 				continue;
@@ -107,14 +113,14 @@ void UPythonFunction::CallPythonCallable(FFrame& Stack, RESULT_DECL)
 	}
 
 	// get return value (if required)
-	UProperty *return_property = function->GetReturnProperty();
+	FProperty *return_property = function->GetReturnProperty();
 	if (return_property && function->ReturnValueOffset != MAX_uint16) {
 #if defined(UEPY_MEMORY_DEBUG)
 		UE_LOG(LogPython, Warning, TEXT("FOUND RETURN VALUE"));
 #endif
 		if (ue_py_convert_pyobject(ret, return_property, frame, 0)) {
 			// copy value to stack result value
-			FMemory::Memcpy(RESULT_PARAM, frame + function->ReturnValueOffset, return_property->ArrayDim * return_property->ElementSize);
+			FMemory::Memcpy(RESULT_PARAM, frame + function->ReturnValueOffset, return_property->ArrayDim * return_property->GetElementSize());
 		}
 		else {
 			UE_LOG(LogPython, Error, TEXT("Invalid return value type for function %s"), *function->GetFName().ToString());
@@ -125,8 +131,12 @@ void UPythonFunction::CallPythonCallable(FFrame& Stack, RESULT_DECL)
 
 UPythonFunction::~UPythonFunction()
 {
-	FScopePythonGIL gil;
-	Py_XDECREF(py_callable);
+	if (Py_IsInitialized())
+	{
+		FScopePythonGIL gil;
+		Py_XDECREF(py_callable);
+	}
+	py_callable = nullptr;
 	FUnrealEnginePythonHouseKeeper::Get()->UnregisterPyUObject(this);
 #if defined(UEPY_MEMORY_DEBUG)
 	UE_LOG(LogPython, Warning, TEXT("PythonFunction callable %p XDECREF'ed"), this);

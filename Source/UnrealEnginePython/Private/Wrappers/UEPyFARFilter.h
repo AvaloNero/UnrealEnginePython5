@@ -3,8 +3,8 @@
 
 #if WITH_EDITOR
 
-#include "AssetRegistryModule.h"
-#include "Runtime/AssetRegistry/Public/ARFilter.h"
+#include "AssetRegistry/AssetRegistryModule.h"
+#include "AssetRegistry/ARFilter.h"
 
 typedef struct
 {
@@ -23,7 +23,7 @@ PyObject *py_ue_new_farfilter(FARFilter);
 ue_PyFARFilter *py_ue_is_farfilter(PyObject *);
 
 void ue_python_init_farfilter(PyObject *);
-void py_ue_sync_farfilter(PyObject *);
+bool py_ue_sync_farfilter(PyObject *);
 void py_ue_clear_farfilter(ue_PyFARFilter *);
 
 #endif

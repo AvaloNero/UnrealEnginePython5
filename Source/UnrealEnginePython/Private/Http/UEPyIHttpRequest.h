@@ -25,7 +25,7 @@ class FPythonSmartHttpDelegate : public FPythonSmartDelegate
 
 public:
 	void OnRequestComplete(FHttpRequestPtr request, FHttpResponsePtr response, bool successful);
-	void OnRequestProgress(FHttpRequestPtr request, int32 sent, int32 received);
+	void OnRequestProgress(FHttpRequestPtr request, uint64 sent, uint64 received);
 
 	void SetPyHttpRequest(ue_PyIHttpRequest *request)
 	{
@@ -35,7 +35,12 @@ public:
 
 	~FPythonSmartHttpDelegate()
 	{
-		Py_XDECREF(py_http_request);
+		if (Py_IsInitialized())
+		{
+			FScopePythonGIL gil;
+			Py_XDECREF(py_http_request);
+		}
+		py_http_request = nullptr;
 	}
 protected:
 	ue_PyIHttpRequest * py_http_request;

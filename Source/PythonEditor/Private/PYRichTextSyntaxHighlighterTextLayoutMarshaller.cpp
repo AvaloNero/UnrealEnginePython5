@@ -311,7 +311,7 @@ void FPYRichTextSyntaxHighlighterTextLayoutMarshaller::ParseTokens(const FString
 			FRunInfo RunInfo(TEXT("SyntaxHighlight.PY.Normal"));
 			FTextBlockStyle TextBlockStyle = SyntaxTextStyle.NormalTextStyle;
 
-#if ENGINE_MINOR_VERSION >= 18
+#if UEP_LEGACY_ENGINE_MINOR_VERSION >= 18
 			const bool bIsWhitespace = FString(TokenText).TrimEnd().IsEmpty();
 #else
 			const bool bIsWhitespace = FString(TokenText).TrimTrailing().IsEmpty();

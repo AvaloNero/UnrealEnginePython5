@@ -16,9 +16,10 @@
 	if (!instance)\
 		return -1;
 
+using FFoliageActorWeakPtr = TWeakObjectPtr<AInstancedFoliageActor>;
+using FFoliageTypeWeakPtr = TWeakObjectPtr<UFoliageType>;
 
-
-static FFoliageInstance* get_foliage_instance(ue_PyFFoliageInstance* self)
+static FFoliageInfo* get_foliage_info(ue_PyFFoliageInstance* self)
 {
 	if (!self->foliage_actor.IsValid())
 	{
@@ -32,16 +33,23 @@ static FFoliageInstance* get_foliage_instance(ue_PyFFoliageInstance* self)
 		return nullptr;
 	}
 
-#if ENGINE_MINOR_VERSION >= 23
-	FFoliageInfo& info = self->foliage_actor->FoliageInfos[self->foliage_type.Get()].Get();
-#else
-
-	FFoliageMeshInfo& info = self->foliage_actor->FoliageMeshes[self->foliage_type.Get()].Get();
-#endif
-
-	if (self->instance_id >= 0 && self->instance_id < info.Instances.Num())
+	FFoliageInfo* info = self->foliage_actor->FindInfo(self->foliage_type.Get());
+	if (!info)
 	{
-		return &info.Instances[self->instance_id];
+		PyErr_SetString(PyExc_Exception, "foliage type is not registered with the instanced foliage actor");
+	}
+	return info;
+}
+
+static FFoliageInstance* get_foliage_instance(ue_PyFFoliageInstance* self)
+{
+	FFoliageInfo* info = get_foliage_info(self);
+	if (!info)
+		return nullptr;
+
+	if (info->Instances.IsValidIndex(self->instance_id))
+	{
+		return &info->Instances[self->instance_id];
 	}
 
 	PyErr_SetString(PyExc_Exception, "invalid foliage instance id");
@@ -71,14 +79,12 @@ static int py_ue_ffoliage_instance_set_location(ue_PyFFoliageInstance* self, PyO
 		{
 			TArray<int32> instances;
 			instances.Add(self->instance_id);
-#if ENGINE_MINOR_VERSION >= 23
-			FFoliageInfo& info = self->foliage_actor->FoliageInfos[self->foliage_type.Get()].Get();
-#else
-			FFoliageMeshInfo& info = self->foliage_actor->FoliageMeshes[self->foliage_type.Get()].Get();
-#endif
-			info.PreMoveInstances(self->foliage_actor.Get(), instances);
+			FFoliageInfo* info = get_foliage_info(self);
+			if (!info)
+				return -1;
+			info->PreMoveInstances(instances);
 			instance->Location = vec->vec;
-			info.PostMoveInstances(self->foliage_actor.Get(), instances);
+			info->PostMoveInstances(instances, true);
 			return 0;
 		}
 	}
@@ -96,14 +102,12 @@ static int py_ue_ffoliage_instance_set_rotation(ue_PyFFoliageInstance* self, PyO
 		{
 			TArray<int32> instances;
 			instances.Add(self->instance_id);
-#if ENGINE_MINOR_VERSION >= 23
-			FFoliageInfo& info = self->foliage_actor->FoliageInfos[self->foliage_type.Get()].Get();
-#else
-			FFoliageMeshInfo& info = self->foliage_actor->FoliageMeshes[self->foliage_type.Get()].Get();
-#endif
-			info.PreMoveInstances(self->foliage_actor.Get(), instances);
+			FFoliageInfo* info = get_foliage_info(self);
+			if (!info)
+				return -1;
+			info->PreMoveInstances(instances);
 			instance->Rotation = rot->rot;
-			info.PostMoveInstances(self->foliage_actor.Get(), instances);
+			info->PostMoveInstances(instances, true);
 			return 0;
 		}
 	}
@@ -114,7 +118,7 @@ static int py_ue_ffoliage_instance_set_rotation(ue_PyFFoliageInstance* self, PyO
 static PyObject* py_ue_ffoliage_instance_get_draw_scale3d(ue_PyFFoliageInstance* self, void* closure)
 {
 	get_instance(self);
-	return py_ue_new_fvector(instance->DrawScale3D);
+	return py_ue_new_fvector(FVector(instance->DrawScale3D));
 }
 
 static PyObject* py_ue_ffoliage_instance_get_flags(ue_PyFFoliageInstance* self, void* closure)
@@ -145,7 +149,7 @@ static PyObject* py_ue_ffoliage_instance_get_procedural_guid(ue_PyFFoliageInstan
 {
 	get_instance(self);
 	FGuid guid = instance->ProceduralGuid;
-	return py_ue_new_owned_uscriptstruct(FindObject<UScriptStruct>(ANY_PACKAGE, UTF8_TO_TCHAR((char*)"Guid")), (uint8*)& guid);
+	return py_ue_new_owned_uscriptstruct(ue_py_find_first_object<UScriptStruct>(TEXT("Guid")), (uint8*)& guid);
 }
 
 static PyObject* py_ue_ffoliage_instance_get_base_id(ue_PyFFoliageInstance* self, void* closure)
@@ -159,7 +163,7 @@ static PyObject* py_ue_ffoliage_instance_get_instance_id(ue_PyFFoliageInstance* 
 	return PyLong_FromLong(self->instance_id);
 }
 
-#if ENGINE_MINOR_VERSION > 19
+#if UEP_LEGACY_ENGINE_MINOR_VERSION > 19
 static PyObject * py_ue_ffoliage_instance_get_base_component(ue_PyFFoliageInstance * self, void* closure)
 {
 	get_instance(self);
@@ -180,7 +184,7 @@ static PyGetSetDef ue_PyFFoliageInstance_getseters[] = {
 	{ (char*)"guid", (getter)py_ue_ffoliage_instance_get_procedural_guid, nullptr, (char*)"", NULL },
 	{ (char*)"base_id", (getter)py_ue_ffoliage_instance_get_base_id, nullptr, (char*)"", NULL },
 	{ (char*)"instance_id", (getter)py_ue_ffoliage_instance_get_instance_id, nullptr, (char*)"", NULL },
-#if ENGINE_MINOR_VERSION > 19
+#if UEP_LEGACY_ENGINE_MINOR_VERSION > 19
 	{ (char*)"base_component", (getter)py_ue_ffoliage_instance_get_base_component, nullptr, (char*)"", NULL },
 #endif
 	{ NULL }  /* Sentinel */
@@ -220,12 +224,19 @@ static PyMethodDef ue_PyFFoliageInstance_methods[] = {
 	{ NULL }  /* Sentinel */
 };
 
+static void ue_py_ffoliage_instance_dealloc(ue_PyFFoliageInstance* self)
+{
+	self->foliage_actor.~FFoliageActorWeakPtr();
+	self->foliage_type.~FFoliageTypeWeakPtr();
+	Py_TYPE(self)->tp_free((PyObject*)self);
+}
+
 static PyTypeObject ue_PyFFoliageInstanceType = {
 	PyVarObject_HEAD_INIT(NULL, 0)
 	"unreal_engine.FFoliageInstance", /* tp_name */
 	sizeof(ue_PyFFoliageInstance), /* tp_basicsize */
 	0,                         /* tp_itemsize */
-	0,       /* tp_dealloc */
+	(destructor)ue_py_ffoliage_instance_dealloc,       /* tp_dealloc */
 	0,                         /* tp_print */
 	0,                         /* tp_getattr */
 	0,                         /* tp_setattr */
@@ -271,8 +282,10 @@ void ue_python_init_ffoliage_instance(PyObject* ue_module)
 PyObject* py_ue_new_ffoliage_instance(AInstancedFoliageActor* foliage_actor, UFoliageType* foliage_type, int32 instance_id)
 {
 	ue_PyFFoliageInstance* ret = (ue_PyFFoliageInstance*)PyObject_New(ue_PyFFoliageInstance, &ue_PyFFoliageInstanceType);
-	ret->foliage_actor = TWeakObjectPtr<AInstancedFoliageActor>(foliage_actor);
-	ret->foliage_type = TWeakObjectPtr<UFoliageType>(foliage_type);
+	if (!ret)
+		return nullptr;
+	new(&ret->foliage_actor) FFoliageActorWeakPtr(foliage_actor);
+	new(&ret->foliage_type) FFoliageTypeWeakPtr(foliage_type);
 	ret->instance_id = instance_id;
 	return (PyObject*)ret;
 }

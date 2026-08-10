@@ -76,13 +76,36 @@ static int ue_py_sdock_tab_init(ue_PySDockTab *self, PyObject *args, PyObject *k
 	ue_py_slate_setup_farguments(SDockTab);
 
 	ue_py_slate_farguments_struct("content_padding", ContentPadding, FMargin);
+#if UEP_LEGACY_ENGINE_MINOR_VERSION < 58
 	ue_py_slate_farguments_optional_struct_ptr("icon", Icon, FSlateBrush);
+#else
+	const FSlateBrush *tab_icon = nullptr;
+	if (PyObject *value = ue_py_dict_get_item(kwargs, "icon"))
+	{
+		tab_icon = ue_py_check_struct<FSlateBrush>(value);
+		if (!tab_icon)
+		{
+			PyErr_SetString(PyExc_TypeError, "unsupported type for attribute icon");
+			return -1;
+		}
+		// SDockTab keeps the brush pointer, so retain its Python wrapper just as
+		// the legacy FArguments::Icon binding did.
+		Py_INCREF(value);
+	}
+#endif
 	ue_py_slate_farguments_text("label", Label);
 	ue_py_slate_farguments_optional_bool("should_autosize", ShouldAutosize);
 	ue_py_slate_farguments_optional_enum("tab_role", TabRole, ETabRole);
 
 
 	ue_py_snew(SDockTab);
+#if UEP_LEGACY_ENGINE_MINOR_VERSION >= 58
+	if (tab_icon)
+	{
+		ue_py_slate_cast(SDockTab);
+		py_SDockTab->SetTabIcon(tab_icon);
+	}
+#endif
 	return 0;
 }
 

@@ -6,7 +6,7 @@
 
 static PyObject *py_ue_iasset_editor_instance_close_window(ue_PyIAssetEditorInstance *self, PyObject * args)
 {
-	self->editor_instance->CloseWindow();
+	self->editor_instance->CloseWindow(EAssetEditorCloseReason::AssetEditorHostClosed);
 	Py_RETURN_NONE;
 }
 

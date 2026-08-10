@@ -6,7 +6,7 @@ UPythonComponent::UPythonComponent()
 {
 	// Set this component to be initialized when the game starts, and to be ticked every frame.  You can turn these features
 	// off to improve performance if you don't need them.
-#if ENGINE_MINOR_VERSION < 14
+#if UEP_LEGACY_ENGINE_MINOR_VERSION < 14
 	bWantsBeginPlay = true;
 #endif
 	PrimaryComponentTick.bCanEverTick = true;
@@ -520,7 +520,7 @@ UObject *UPythonComponent::CallPythonComponentMethodObject(FString method_name, 
 	return nullptr;
 }
 
-#if ENGINE_MINOR_VERSION >= 15
+#if UEP_LEGACY_ENGINE_MINOR_VERSION >= 15
 TMap<FString, FString> UPythonComponent::CallPythonComponentMethodMap(FString method_name, FString args)
 {
 	TMap<FString, FString> output_map;
@@ -642,16 +642,19 @@ void UPythonComponent::CallPythonComponentMethodStringArray(FString method_name,
 
 UPythonComponent::~UPythonComponent()
 {
-	FScopePythonGIL gil;
-
-#
-	Py_XDECREF(py_component_instance);
+	if (Py_IsInitialized())
+	{
+		FScopePythonGIL gil;
+		Py_XDECREF(py_component_instance);
 
 #if defined(UEPY_MEMORY_DEBUG)
-	UE_LOG(LogPython, Warning, TEXT("Python UActorComponent %p (mapped to %p) wrapper XDECREF'ed"), this, py_uobject ? py_uobject->py_proxy : nullptr);
+		UE_LOG(LogPython, Warning, TEXT("Python UActorComponent %p (mapped to %p) wrapper XDECREF'ed"), this, py_uobject ? py_uobject->py_proxy : nullptr);
 #endif
 
-	// this could trigger the distruction of the python/uobject mapper
-	Py_XDECREF(py_uobject);
+		// This could trigger destruction of the Python/UObject mapper.
+		Py_XDECREF(py_uobject);
+	}
+	py_component_instance = nullptr;
+	py_uobject = nullptr;
 	FUnrealEnginePythonHouseKeeper::Get()->UnregisterPyUObject(this);
 }

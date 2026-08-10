@@ -11,10 +11,19 @@ class SPythonTreeView : public STreeView<TSharedPtr<struct FPythonItem>>
 public:
 	~SPythonTreeView()
 	{
-		delete(ItemsSource);
+		ClearRootItemsSource();
+		delete PythonItemsSource;
+	}
+
+	void SetPythonItemsSource(TArray<TSharedPtr<FPythonItem>> *InItemsSource)
+	{
+		PythonItemsSource = InItemsSource;
 	}
 
 	void SetPythonItemExpansion(PyObject *item, bool InShouldExpandItem);
+
+private:
+	TArray<TSharedPtr<FPythonItem>> *PythonItemsSource = nullptr;
 };
 
 typedef struct

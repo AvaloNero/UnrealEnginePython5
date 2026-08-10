@@ -1,6 +1,27 @@
 
 #include "PythonHouseKeeper.h"
 
+namespace
+{
+    FUnrealEnginePythonHouseKeeper *GHouseKeeperSingleton = nullptr;
+    FDelegateHandle GPostGarbageCollectHandle;
+    bool GHouseKeeperShutdownRequested = false;
+}
+
+void unreal_engine_python_shutdown_housekeeper()
+{
+    GHouseKeeperShutdownRequested = true;
+    if (GPostGarbageCollectHandle.IsValid())
+    {
+#if UEP_LEGACY_ENGINE_MINOR_VERSION >= 18
+        FCoreUObjectDelegates::GetPostGarbageCollect().Remove(GPostGarbageCollectHandle);
+#else
+        FCoreUObjectDelegates::PostGarbageCollect.Remove(GPostGarbageCollectHandle);
+#endif
+        GPostGarbageCollectHandle.Reset();
+    }
+}
+
 void FUnrealEnginePythonHouseKeeper::AddReferencedObjects(FReferenceCollector& InCollector)
 {
     InCollector.AddReferencedObjects(PythonTrackedObjects);
@@ -8,22 +29,29 @@ void FUnrealEnginePythonHouseKeeper::AddReferencedObjects(FReferenceCollector& I
 
 FUnrealEnginePythonHouseKeeper *FUnrealEnginePythonHouseKeeper::Get()
 {
-    static FUnrealEnginePythonHouseKeeper *Singleton;
-    if (!Singleton)
+    if (!GHouseKeeperSingleton)
     {
-        Singleton = new FUnrealEnginePythonHouseKeeper();
-        // register a new delegate for the GC
-#if ENGINE_MINOR_VERSION >= 18
-        FCoreUObjectDelegates::GetPostGarbageCollect().AddRaw(Singleton, &FUnrealEnginePythonHouseKeeper::RunGCDelegate);
+        GHouseKeeperSingleton = new FUnrealEnginePythonHouseKeeper();
+        // Register a new delegate for GC while the Python VM is available.
+        if (!GHouseKeeperShutdownRequested)
+        {
+#if UEP_LEGACY_ENGINE_MINOR_VERSION >= 18
+            GPostGarbageCollectHandle = FCoreUObjectDelegates::GetPostGarbageCollect().AddRaw(GHouseKeeperSingleton, &FUnrealEnginePythonHouseKeeper::RunGCDelegate);
 #else
-        FCoreUObjectDelegates::PostGarbageCollect.AddRaw(Singleton, &FUnrealEnginePythonHouseKeeper::RunGCDelegate);
+            GPostGarbageCollectHandle = FCoreUObjectDelegates::PostGarbageCollect.AddRaw(GHouseKeeperSingleton, &FUnrealEnginePythonHouseKeeper::RunGCDelegate);
 #endif
+        }
     }
-    return Singleton;
+    return GHouseKeeperSingleton;
 }
 
 void FUnrealEnginePythonHouseKeeper::RunGCDelegate()
 {
+    if (GHouseKeeperShutdownRequested || !Py_IsInitialized())
+    {
+        return;
+    }
+
     FScopePythonGIL gil;
     RunGC();
 }

@@ -3,9 +3,9 @@
 
 #if WITH_EDITOR
 
-#if ENGINE_MINOR_VERSION > 13
+#if UEP_LEGACY_ENGINE_MINOR_VERSION > 13
 
-#include "Developer/RawMesh/Public/RawMesh.h"
+#include "RawMesh.h"
 
 struct ue_PyFRawMesh
 {

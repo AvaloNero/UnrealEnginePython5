@@ -1,5 +1,38 @@
 #include "UEPyAnimSequence.h"
 
+#if WITH_EDITOR && ENGINE_MAJOR_VERSION >= 5
+#include "Animation/AnimData/IAnimationDataController.h"
+#include "Animation/AnimData/IAnimationDataModel.h"
+
+namespace
+{
+FRawAnimSequenceTrack BuildRawTrackFromDataModel(const IAnimationDataModel& DataModel, const FName TrackName)
+{
+	FRawAnimSequenceTrack RawTrack;
+	DataModel.IterateBoneKeys(TrackName,
+		[&RawTrack](const FVector3f& Position, const FQuat4f& Rotation, const FVector3f Scale, const FFrameNumber&)
+		{
+			RawTrack.PosKeys.Add(Position);
+			RawTrack.RotKeys.Add(Rotation);
+			RawTrack.ScaleKeys.Add(Scale);
+			return true;
+		});
+	return RawTrack;
+}
+
+bool GetBoneTrackNames(const UAnimSequence& AnimSequence, TArray<FName>& OutTrackNames)
+{
+	const IAnimationDataModel* DataModel = AnimSequence.GetDataModel();
+	if (!DataModel)
+	{
+		return false;
+	}
+
+	DataModel->GetBoneTrackNames(OutTrackNames);
+	return true;
+}
+}
+#endif
 
 PyObject *py_ue_anim_get_skeleton(ue_PyUObject * self, PyObject * args)
 {
@@ -40,7 +73,8 @@ PyObject *py_ue_anim_get_bone_transform(ue_PyUObject * self, PyObject * args)
 		bUseRawData = true;
 
 	FTransform OutAtom;
-	anim->GetBoneTransform(OutAtom, track_index, frame_time, bUseRawData);
+	const FAnimExtractContext ExtractionContext(frame_time);
+	anim->GetBoneTransform(OutAtom, FSkeletonPoseBoneIndex(track_index), ExtractionContext, bUseRawData);
 
 	return py_ue_new_ftransform(OutAtom);
 }
@@ -65,7 +99,7 @@ PyObject *py_ue_anim_extract_bone_transform(ue_PyUObject * self, PyObject * args
 	if (rast)
 	{
 		FTransform OutAtom;
-		anim->ExtractBoneTransform(rast->raw_anim_sequence_track, OutAtom, frame_time);
+		UE::Anim::ExtractBoneTransform(rast->raw_anim_sequence_track, OutAtom, FMath::FloorToInt(frame_time));
 
 		return py_ue_new_ftransform(OutAtom);
 	}
@@ -95,7 +129,7 @@ PyObject *py_ue_anim_extract_root_motion(ue_PyUObject * self, PyObject * args)
 	if (py_b_allow_looping && PyObject_IsTrue(py_b_allow_looping))
 		bAllowLooping = true;
 
-	return py_ue_new_ftransform(anim->ExtractRootMotion(start_time, delta_time, bAllowLooping));
+	return py_ue_new_ftransform(UE::Anim::ExtractRootMotionFromAnimationAsset(anim, nullptr, start_time, delta_time, bAllowLooping));
 }
 
 
@@ -104,8 +138,8 @@ PyObject *py_ue_anim_extract_root_motion(ue_PyUObject * self, PyObject * args)
 
 
 #if WITH_EDITOR
-#if ENGINE_MINOR_VERSION > 13
-#if ENGINE_MINOR_VERSION < 23
+#if UEP_LEGACY_ENGINE_MINOR_VERSION > 13
+#if UEP_LEGACY_ENGINE_MINOR_VERSION < 23
 PyObject *py_ue_anim_sequence_update_compressed_track_map_from_raw(ue_PyUObject * self, PyObject * args)
 {
 	ue_py_check(self);
@@ -130,13 +164,38 @@ PyObject *py_ue_anim_sequence_get_raw_animation_data(ue_PyUObject * self, PyObje
 		return PyErr_Format(PyExc_Exception, "UObject is not a UAnimSequence.");
 
 	PyObject *py_list = PyList_New(0);
+	if (!py_list)
+		return nullptr;
 
+#if ENGINE_MAJOR_VERSION >= 5
+	const IAnimationDataModel* DataModel = anim_seq->GetDataModel();
+	if (!DataModel)
+	{
+		Py_DECREF(py_list);
+		return PyErr_Format(PyExc_Exception, "UAnimSequence has no editable animation data model.");
+	}
+
+	TArray<FName> TrackNames;
+	DataModel->GetBoneTrackNames(TrackNames);
+	for (const FName TrackName : TrackNames)
+	{
+		PyObject *py_item = py_ue_new_fraw_anim_sequence_track(BuildRawTrackFromDataModel(*DataModel, TrackName));
+		if (!py_item || PyList_Append(py_list, py_item) < 0)
+		{
+			Py_XDECREF(py_item);
+			Py_DECREF(py_list);
+			return nullptr;
+		}
+		Py_DECREF(py_item);
+	}
+#else
 	for (FRawAnimSequenceTrack rast : anim_seq->GetRawAnimationData())
 	{
 		PyObject *py_item = py_ue_new_fraw_anim_sequence_track(rast);
 		PyList_Append(py_list, py_item);
 		Py_DECREF(py_item);
 	}
+#endif
 
 	return py_list;
 }
@@ -153,10 +212,22 @@ PyObject *py_ue_anim_sequence_get_raw_animation_track(ue_PyUObject * self, PyObj
 	if (!anim_seq)
 		return PyErr_Format(PyExc_Exception, "UObject is not a UAnimSequence.");
 
+#if ENGINE_MAJOR_VERSION >= 5
+	const IAnimationDataModel* DataModel = anim_seq->GetDataModel();
+	TArray<FName> TrackNames;
+	if (!DataModel || !GetBoneTrackNames(*anim_seq, TrackNames))
+		return PyErr_Format(PyExc_Exception, "UAnimSequence has no editable animation data model.");
+
+	if (!TrackNames.IsValidIndex(index))
+		return PyErr_Format(PyExc_Exception, "invalid track index %d", index);
+
+	return py_ue_new_fraw_anim_sequence_track(BuildRawTrackFromDataModel(*DataModel, TrackNames[index]));
+#else
 	if (index < 0 || index >= anim_seq->GetAnimationTrackNames().Num())
 		return PyErr_Format(PyExc_Exception, "invalid track index %d", index);
 
 	return py_ue_new_fraw_anim_sequence_track(anim_seq->GetRawAnimationTrack(index));
+#endif
 }
 
 PyObject *py_ue_anim_add_key_to_sequence(ue_PyUObject * self, PyObject * args)
@@ -190,7 +261,11 @@ PyObject *py_ue_anim_sequence_apply_raw_anim_changes(ue_PyUObject * self, PyObje
 	if (!anim_seq)
 		return PyErr_Format(PyExc_Exception, "UObject is not a UAnimSequence.");
 
-
+#if ENGINE_MAJOR_VERSION >= 5
+	// Data-model controller mutations invalidate and rebuild compressed data automatically.
+	// Preserve the legacy method's synchronous completion contract for Python callers.
+	anim_seq->WaitOnExistingCompression();
+#else
 	if (anim_seq->DoesNeedRebake())
 	{
 		anim_seq->Modify(true);
@@ -202,6 +277,7 @@ PyObject *py_ue_anim_sequence_apply_raw_anim_changes(ue_PyUObject * self, PyObje
 		anim_seq->Modify(true);
 		anim_seq->RequestSyncAnimRecompression(false);
 	}
+#endif
 
 	Py_RETURN_NONE;
 }
@@ -236,12 +312,36 @@ PyObject *py_ue_anim_sequence_add_new_raw_track(ue_PyUObject * self, PyObject * 
 		}
 	}
 
+
+#if ENGINE_MAJOR_VERSION >= 5
+	const FName TrackName(UTF8_TO_TCHAR(name));
+	const IAnimationDataModel* DataModel = anim_seq->GetDataModel();
+	if (!DataModel)
+		return PyErr_Format(PyExc_Exception, "UAnimSequence has no editable animation data model.");
+	if (DataModel->IsValidBoneTrackName(TrackName))
+		return PyErr_Format(PyExc_Exception, "animation track '%s' already exists", name);
+
+	IAnimationDataController& Controller = anim_seq->GetController();
+	if (!Controller.AddBoneCurve(TrackName))
+		return PyErr_Format(PyExc_Exception, "unable to add animation track '%s'; it must name a bone in the sequence skeleton", name);
+
+	if (rast && !Controller.SetBoneTrackKeys(TrackName, rast->PosKeys, rast->RotKeys, rast->ScaleKeys))
+	{
+		Controller.RemoveBoneTrack(TrackName);
+		return PyErr_Format(PyExc_Exception, "invalid raw animation keys for track '%s'", name);
+	}
+
+	TArray<FName> TrackNames;
+	DataModel->GetBoneTrackNames(TrackNames);
+	const int32 index = TrackNames.IndexOfByKey(TrackName);
+#else
 	anim_seq->Modify();
 
 	int32 index = anim_seq->AddNewRawTrack(FName(UTF8_TO_TCHAR(name)), rast);
 
 	anim_seq->MarkRawDataAsModified();
 	anim_seq->MarkPackageDirty();
+#endif
 
 	return PyLong_FromLong(index);
 }
@@ -265,6 +365,17 @@ PyObject *py_ue_anim_sequence_update_raw_track(ue_PyUObject * self, PyObject * a
 		return PyErr_Format(PyExc_Exception, "argument is not a FRawAnimSequenceTrack.");
 	}
 
+#if ENGINE_MAJOR_VERSION >= 5
+	TArray<FName> TrackNames;
+	if (!GetBoneTrackNames(*anim_seq, TrackNames))
+		return PyErr_Format(PyExc_Exception, "UAnimSequence has no editable animation data model.");
+	if (!TrackNames.IsValidIndex(track_index))
+		return PyErr_Format(PyExc_Exception, "invalid track index %d", track_index);
+
+	const FRawAnimSequenceTrack& RawTrack = py_f_rast->raw_anim_sequence_track;
+	if (!anim_seq->GetController().SetBoneTrackKeys(TrackNames[track_index], RawTrack.PosKeys, RawTrack.RotKeys, RawTrack.ScaleKeys))
+		return PyErr_Format(PyExc_Exception, "invalid raw animation keys for track index %d", track_index);
+#else
 	anim_seq->Modify();
 
 	FRawAnimSequenceTrack& RawRef = anim_seq->GetRawAnimationTrack(track_index);
@@ -275,6 +386,7 @@ PyObject *py_ue_anim_sequence_update_raw_track(ue_PyUObject * self, PyObject * a
 
 	anim_seq->MarkRawDataAsModified();
 	anim_seq->MarkPackageDirty();
+#endif
 
 	Py_RETURN_NONE;
 }
@@ -329,9 +441,9 @@ PyObject *py_ue_get_blend_parameter(ue_PyUObject * self, PyObject * args)
 	if (!PyArg_ParseTuple(args, "i:get_blend_parameter", &index))
 		return nullptr;
 
-	UBlendSpaceBase *blend = ue_py_check_type<UBlendSpaceBase>(self);
+	UBlendSpace *blend = ue_py_check_type<UBlendSpace>(self);
 	if (!blend)
-		return PyErr_Format(PyExc_Exception, "UObject is not a UBlendSpaceBase.");
+		return PyErr_Format(PyExc_Exception, "UObject is not a UBlendSpace.");
 
 	if (index < 0 || index > 2)
 		return PyErr_Format(PyExc_Exception, "invalid Blend Parameter index");
@@ -350,9 +462,9 @@ PyObject *py_ue_set_blend_parameter(ue_PyUObject * self, PyObject * args)
 	if (!PyArg_ParseTuple(args, "iO:get_blend_parameter", &index, &py_blend))
 		return nullptr;
 
-	UBlendSpaceBase *blend = ue_py_check_type<UBlendSpaceBase>(self);
+	UBlendSpace *blend = ue_py_check_type<UBlendSpace>(self);
 	if (!blend)
-		return PyErr_Format(PyExc_Exception, "UObject is not a UBlendSpaceBase.");
+		return PyErr_Format(PyExc_Exception, "UObject is not a UBlendSpace.");
 
 	if (index < 0 || index > 2)
 		return PyErr_Format(PyExc_Exception, "invalid Blend Parameter index");

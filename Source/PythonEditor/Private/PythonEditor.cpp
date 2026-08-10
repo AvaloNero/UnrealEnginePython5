@@ -2,7 +2,7 @@
 
 #include "Runtime/Core/Public/Modules/ModuleManager.h"
 #include "AssetToolsModule.h"
-#include "Editor/UnrealEd/Public/Toolkits/AssetEditorToolkit.h"
+#include "Toolkits/AssetEditorToolkit.h"
 #include "LevelEditor.h"
 #include "PythonEditorStyle.h"
 #include "PythonProjectEditor.h"
@@ -25,7 +25,7 @@ public:
 		{
 			static TSharedRef<SDockTab> SpawnPythonEditorTab(const FSpawnTabArgs& TabArgs)
 			{
-				TSharedRef<FPythonProjectEditor> NewPythonProjectEditor(new FPythonProjectEditor());
+				TSharedRef<FPythonProjectEditor> NewPythonProjectEditor = MakeShared<FPythonProjectEditor>();
 				NewPythonProjectEditor->InitPythonEditor(EToolkitMode::Standalone, TSharedPtr<class IToolkitHost>(), GetMutableDefault<UPythonProject>());
 
 				return FGlobalTabmanager::Get()->GetMajorTabForTabManager(NewPythonProjectEditor->GetTabManager().ToSharedRef()).ToSharedRef();

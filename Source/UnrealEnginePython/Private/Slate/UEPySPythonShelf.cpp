@@ -1,14 +1,14 @@
 #include "UEPySPythonShelf.h"
 #if WITH_EDITOR
 
-#if ENGINE_MINOR_VERSION > 14
+#if UEP_LEGACY_ENGINE_MINOR_VERSION > 14
 
 
 
 #include "Editor/ContentBrowser/Public/ContentBrowserModule.h"
 
 #include "Editor/ContentBrowser/Public/IContentBrowserSingleton.h"
-#include "Editor/ContentBrowser/Private/SAssetPicker.h"
+#include "CollectionManagerModule.h"
 
 
 static PyMethodDef ue_PySPythonShelf_methods[] = {
@@ -123,11 +123,24 @@ static int ue_py_spython_shelf_init(ue_PySPythonShelf *self, PyObject *args, PyO
 		{
 			if (PyUnicodeOrString_Check(item))
 			{
-				FName class_name = FName(UTF8_TO_TCHAR(UEPyUnicode_AsUTF8(item)));
-				asset_picker_config.Filter.ClassNames.Add(class_name);
+				const FString class_name(UTF8_TO_TCHAR(UEPyUnicode_AsUTF8(item)));
+				const FTopLevelAssetPath class_path = class_name.StartsWith(TEXT("/"))
+					? FTopLevelAssetPath(class_name)
+					: UClass::TryConvertShortTypeNameToPathName<UStruct>(*class_name, ELogVerbosity::NoLogging);
+				if (class_path.IsNull())
+				{
+					Py_DECREF(item);
+					Py_DECREF(py_classes_iterable);
+					PyErr_SetString(PyExc_ValueError, "unable to resolve an asset class");
+					return -1;
+				}
+				asset_picker_config.Filter.ClassPaths.Add(class_path);
 			}
+			Py_DECREF(item);
 		}
 		Py_DECREF(py_classes_iterable);
+		if (PyErr_Occurred())
+			return -1;
 	}
 
 	if (py_collections_iterable)
@@ -137,10 +150,16 @@ static int ue_py_spython_shelf_init(ue_PySPythonShelf *self, PyObject *args, PyO
 			if (PyUnicodeOrString_Check(item))
 			{
 				FName collection_name = FName(UTF8_TO_TCHAR(UEPyUnicode_AsUTF8(item)));
-				asset_picker_config.Collections.Add(FCollectionNameType(collection_name, ECollectionShareType::CST_Local));
+				asset_picker_config.CollectionsFilter.Add(FCollectionRef(
+					FCollectionManagerModule::GetModule().Get().GetProjectCollectionContainer(),
+					collection_name,
+					ECollectionShareType::CST_Local));
 			}
+			Py_DECREF(item);
 		}
 		Py_DECREF(py_collections_iterable);
+		if (PyErr_Occurred())
+			return -1;
 	}
 
 	if (py_callable_double_clicked)

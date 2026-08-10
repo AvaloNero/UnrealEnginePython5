@@ -38,12 +38,12 @@ static PyObject *py_ue_fassetdata_get_thumbnail(ue_PyFAssetData *self, PyObject 
 	return py_ue_new_fobject_thumbnail(*thumbnail);
 }
 
-#if ENGINE_MINOR_VERSION >= 18
+#if UEP_LEGACY_ENGINE_MINOR_VERSION >= 18
 
 static PyObject *py_ue_fassetdata_has_custom_thumbnail(ue_PyFAssetData *self, PyObject * args)
 {
 
-#if ENGINE_MINOR_VERSION > 18
+#if UEP_LEGACY_ENGINE_MINOR_VERSION > 18
 	if (!ThumbnailTools::AssetHasCustomThumbnail(self->asset_data.GetFullName()))
 #else
 	if (!ThumbnailTools::AssetHasCustomThumbnail(self->asset_data))
@@ -72,7 +72,7 @@ static PyMethodDef ue_PyFAssetData_methods[] = {
 	{ "is_asset_loaded", (PyCFunction)py_ue_fassetdata_is_asset_loaded, METH_VARARGS, "" },
 	{ "get_thumbnail", (PyCFunction)py_ue_fassetdata_get_thumbnail, METH_VARARGS, "" },
 
-#if ENGINE_MINOR_VERSION >= 18
+#if UEP_LEGACY_ENGINE_MINOR_VERSION >= 18
 	{ "has_custom_thumbnail", (PyCFunction)py_ue_fassetdata_has_custom_thumbnail, METH_VARARGS, "" },
 #endif
 	{ "has_cached_thumbnail", (PyCFunction)py_ue_fassetdata_has_cached_thumbnail, METH_VARARGS, "" },
@@ -81,7 +81,7 @@ static PyMethodDef ue_PyFAssetData_methods[] = {
 
 static PyObject *py_ue_fassetdata_get_asset_class(ue_PyFAssetData *self, void *closure)
 {
-	return PyUnicode_FromString(TCHAR_TO_UTF8(*self->asset_data.AssetClass.ToString()));
+	return PyUnicode_FromString(TCHAR_TO_UTF8(*self->asset_data.AssetClassPath.GetAssetName().ToString()));
 }
 
 static PyObject *py_ue_fassetdata_get_asset_name(ue_PyFAssetData *self, void *closure)
@@ -89,7 +89,7 @@ static PyObject *py_ue_fassetdata_get_asset_name(ue_PyFAssetData *self, void *cl
 	return PyUnicode_FromString(TCHAR_TO_UTF8(*self->asset_data.AssetName.ToString()));
 }
 
-#if ENGINE_MINOR_VERSION < 17
+#if UEP_LEGACY_ENGINE_MINOR_VERSION < 17
 static PyObject *py_ue_fassetdata_get_group_names(ue_PyFAssetData *self, void *closure)
 {
 	return PyUnicode_FromString(TCHAR_TO_UTF8(*self->asset_data.GroupNames.ToString()));
@@ -98,7 +98,7 @@ static PyObject *py_ue_fassetdata_get_group_names(ue_PyFAssetData *self, void *c
 
 static PyObject *py_ue_fassetdata_get_object_path(ue_PyFAssetData *self, void *closure)
 {
-	return PyUnicode_FromString(TCHAR_TO_UTF8(*self->asset_data.ObjectPath.ToString()));
+	return PyUnicode_FromString(TCHAR_TO_UTF8(*self->asset_data.GetObjectPathString()));
 }
 
 static PyObject *py_ue_fassetdata_get_package_flags(ue_PyFAssetData *self, void *closure)
@@ -119,19 +119,38 @@ static PyObject *py_ue_fassetdata_get_package_path(ue_PyFAssetData *self, void *
 static PyObject *py_ue_fassetdata_get_tags_and_values(ue_PyFAssetData *self, void *closure)
 {
 	PyObject *ret = PyDict_New();
+	if (!ret)
+		return nullptr;
+
 	for (auto It = self->asset_data.TagsAndValues.CreateConstIterator(); It; ++It)
 	{
-		PyDict_SetItem(ret,
-			PyUnicode_FromString(TCHAR_TO_UTF8(*It->Key.ToString())),
-			PyUnicode_FromString(TCHAR_TO_UTF8(*It->Value)));
+		const FString Key = It.Key().ToString();
+		const FString Value = It.Value().AsString();
+		PyObject *py_key = PyUnicode_FromString(TCHAR_TO_UTF8(*Key));
+		PyObject *py_value = PyUnicode_FromString(TCHAR_TO_UTF8(*Value));
+		if (!py_key || !py_value || PyDict_SetItem(ret, py_key, py_value) < 0)
+		{
+			Py_XDECREF(py_key);
+			Py_XDECREF(py_value);
+			Py_DECREF(ret);
+			return nullptr;
+		}
+		Py_DECREF(py_key);
+		Py_DECREF(py_value);
 	}
 	return ret;
+}
+
+static void ue_py_fassetdata_dealloc(ue_PyFAssetData *self)
+{
+	self->asset_data.~FAssetData();
+	Py_TYPE(self)->tp_free((PyObject *)self);
 }
 
 static PyGetSetDef ue_PyFAssetData_getseters[] = {
 	{ (char *)"asset_class", (getter)py_ue_fassetdata_get_asset_class, nullptr, (char *)"asset_class" },
 	{ (char *)"asset_name", (getter)py_ue_fassetdata_get_asset_name, nullptr, (char *)"asset_name" },
-#if ENGINE_MINOR_VERSION < 17
+#if UEP_LEGACY_ENGINE_MINOR_VERSION < 17
 	{ (char *)"group_names", (getter)py_ue_fassetdata_get_group_names, nullptr, (char *)"group_names" },
 #endif
 	{ (char *)"object_path",(getter)py_ue_fassetdata_get_object_path, nullptr, (char *)"object_path" },
@@ -159,7 +178,7 @@ static PyTypeObject ue_PyFAssetDataType = {
 	"unreal_engine.FAssetData", /* tp_name */
 	sizeof(ue_PyFAssetData),    /* tp_basicsize */
 	0,                         /* tp_itemsize */
-	0,   /* tp_dealloc */
+	(destructor)ue_py_fassetdata_dealloc,   /* tp_dealloc */
 	0,                         /* tp_print */
 	0,                         /* tp_getattr */
 	0,                         /* tp_setattr */
@@ -201,6 +220,8 @@ void ue_python_init_fassetdata(PyObject *ue_module)
 PyObject *py_ue_new_fassetdata(FAssetData asset_data)
 {
 	ue_PyFAssetData *ret = (ue_PyFAssetData *)PyObject_New(ue_PyFAssetData, &ue_PyFAssetDataType);
+	if (!ret)
+		return nullptr;
 
 	new(&ret->asset_data) FAssetData(asset_data);
 	return (PyObject *)ret;

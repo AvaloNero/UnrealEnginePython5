@@ -15,7 +15,7 @@ public:
 			delete(PythonOptionsSource);
 	}
 
-	const TArray<TSharedPtr<FPythonItem>> *PythonOptionsSource;
+	const TArray<TSharedPtr<FPythonItem>> *PythonOptionsSource = nullptr;
 };
 
 typedef struct {

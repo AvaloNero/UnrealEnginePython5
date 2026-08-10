@@ -34,7 +34,7 @@ static PyObject* py_ue_fmenu_builder_add_menu_entry(ue_PyFMenuBuilder* self, PyO
 	char* tooltip;
 	PyObject* py_callable;
 	PyObject* py_obj = nullptr;
-#if ENGINE_MINOR_VERSION >= 23
+#if UEP_LEGACY_ENGINE_MINOR_VERSION >= 23
 	int ui_action_type = (int)EUserInterfaceActionType::Button;
 #else
 	int ui_action_type = EUserInterfaceActionType::Button;
@@ -62,7 +62,7 @@ static PyObject* py_ue_fmenu_builder_add_menu_entry(ue_PyFMenuBuilder* self, PyO
 	}
 
 	self->menu_builder.AddMenuEntry(FText::FromString(UTF8_TO_TCHAR(label)), FText::FromString(UTF8_TO_TCHAR(tooltip)), FSlateIcon(), FUIAction(handler), NAME_None,
-#if ENGINE_MINOR_VERSION >= 23
+#if UEP_LEGACY_ENGINE_MINOR_VERSION >= 23
 		(EUserInterfaceActionType)ui_action_type);
 #else
 		(EUserInterfaceActionType::Type)ui_action_type);
@@ -122,27 +122,44 @@ static PyObject* py_ue_fmenu_builder_add_asset_actions(ue_PyFMenuBuilder* self, 
 	if (!PyArg_ParseTuple(args, "O:add_asset_actions", &py_assets))
 		return nullptr;
 
-	py_assets = PyObject_GetIter(py_assets);
-	if (!py_assets)
+	PyObject* py_iterator = PyObject_GetIter(py_assets);
+	if (!py_iterator)
 	{
 		return PyErr_Format(PyExc_Exception, "argument is not iterable");
 	}
 
 	TArray<UObject*> u_objects;
-	while (PyObject * item = PyIter_Next(py_assets))
+	while (PyObject * item = PyIter_Next(py_iterator))
 	{
 		UObject* u_object = ue_py_check_type<UObject>(item);
-		if (u_object)
+		Py_DECREF(item);
+		if (!u_object)
 		{
-			u_objects.Add(u_object);
+			Py_DECREF(py_iterator);
+			return PyErr_Format(PyExc_TypeError, "asset entries must be UObjects");
 		}
+		u_objects.Add(u_object);
 	}
-	Py_DECREF(py_assets);
+	Py_DECREF(py_iterator);
+	if (PyErr_Occurred())
+		return nullptr;
+	if (u_objects.IsEmpty())
+		Py_RETURN_FALSE;
 
 	FAssetToolsModule& AssetToolsModule = FModuleManager::LoadModuleChecked<FAssetToolsModule>(TEXT("AssetTools"));
-	bool addedSomething = AssetToolsModule.Get().GetAssetActions(u_objects, self->menu_builder, true);
-	if (addedSomething)
+	TWeakPtr<IAssetTypeActions> CommonActions = AssetToolsModule.Get().GetAssetTypeActionsForClass(u_objects[0]->GetClass());
+	for (int32 Index = 1; Index < u_objects.Num() && CommonActions.IsValid(); ++Index)
 	{
+		if (AssetToolsModule.Get().GetAssetTypeActionsForClass(u_objects[Index]->GetClass()).Pin() != CommonActions.Pin())
+		{
+			CommonActions.Reset();
+		}
+	}
+
+	TSharedPtr<IAssetTypeActions> Actions = CommonActions.Pin();
+	if (Actions.IsValid() && Actions->ShouldCallGetActions() && Actions->HasActions(u_objects))
+	{
+		Actions->GetActions(u_objects, self->menu_builder);
 		Py_RETURN_TRUE;
 	}
 

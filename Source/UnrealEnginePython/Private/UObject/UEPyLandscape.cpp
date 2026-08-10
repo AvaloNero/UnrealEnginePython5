@@ -45,7 +45,7 @@ PyObject* py_ue_landscape_import(ue_PyUObject* self, PyObject* args)
 	int sections_per_component;
 	int component_x;
 	int component_y;
-	Py_buffer heightmap_buffer;
+	Py_buffer heightmap_buffer = {};
 	int layer_type = (int)ELandscapeImportAlphamapType::Additive;
 
 	if (!PyArg_ParseTuple(args, "iiiiy*|i:landscape_import", &section_size, &sections_per_component, &component_x, &component_y, &heightmap_buffer, &layer_type))
@@ -53,33 +53,57 @@ PyObject* py_ue_landscape_import(ue_PyUObject* self, PyObject* args)
 
 	ALandscapeProxy* landscape = ue_py_check_type<ALandscapeProxy>(self);
 	if (!landscape)
+	{
+		PyBuffer_Release(&heightmap_buffer);
 		return PyErr_Format(PyExc_Exception, "uobject is not a ULandscapeProxy");
+	}
 
-	int quads_per_component = sections_per_component * section_size;
-	int size_x = component_x * quads_per_component + 1;
-	int size_y = component_y * quads_per_component + 1;
+	if (section_size <= 0 || sections_per_component <= 0 || component_x <= 0 || component_y <= 0)
+	{
+		PyBuffer_Release(&heightmap_buffer);
+		return PyErr_Format(PyExc_ValueError, "landscape dimensions must be positive");
+	}
 
-	if (heightmap_buffer.len < (Py_ssize_t)(size_x * size_y * sizeof(uint16)))
-		return PyErr_Format(PyExc_Exception, "not enough heightmap data, expecting %lu bytes", size_x * size_y * sizeof(uint16));
+	const int32 quads_per_component = sections_per_component * section_size;
+	const int32 size_x = component_x * quads_per_component + 1;
+	const int32 size_y = component_y * quads_per_component + 1;
+	const int64 required_samples = static_cast<int64>(size_x) * size_y;
+	const int64 required_bytes = required_samples * sizeof(uint16);
+
+	if (required_samples > MAX_int32 || heightmap_buffer.len < required_bytes)
+	{
+		PyBuffer_Release(&heightmap_buffer);
+		return PyErr_Format(PyExc_Exception, "not enough heightmap data, expecting %lld bytes", required_bytes);
+	}
 
 	uint16* data = (uint16*)heightmap_buffer.buf;
 
 	TArray<FLandscapeImportLayerInfo> infos;
 
-#if ENGINE_MINOR_VERSION < 23
+#if UEP_LEGACY_ENGINE_MINOR_VERSION < 23
 	landscape->Import(FGuid::NewGuid(), 0, 0, size_x - 1, size_y - 1, sections_per_component, section_size, data, nullptr, infos, (ELandscapeImportAlphamapType)layer_type);
 #else
 	TMap<FGuid, TArray<uint16>> HeightDataPerLayers;
 	TArray<uint16> HeightData;
-	for (uint32 i = 0; i < (heightmap_buffer.len / sizeof(uint16)); i++)
-	{
-		HeightData.Add(data[i]);
-	}
+	HeightData.Append(data, static_cast<int32>(required_samples));
 	HeightDataPerLayers.Add(FGuid(), HeightData);
 	TMap<FGuid, TArray<FLandscapeImportLayerInfo>> MaterialLayersInfo;
 	MaterialLayersInfo.Add(FGuid(), infos);
-	landscape->Import(FGuid::NewGuid(), 0, 0, size_x - 1, size_y - 1, sections_per_component, section_size, HeightDataPerLayers, nullptr, MaterialLayersInfo, (ELandscapeImportAlphamapType)layer_type);
+	landscape->Import(
+		FGuid::NewGuid(),
+		0,
+		0,
+		size_x - 1,
+		size_y - 1,
+		sections_per_component,
+		section_size,
+		HeightDataPerLayers,
+		nullptr,
+		MaterialLayersInfo,
+		static_cast<ELandscapeImportAlphamapType>(layer_type),
+		TArrayView<const FLandscapeLayer>());
 #endif
+	PyBuffer_Release(&heightmap_buffer);
 
 	Py_RETURN_NONE;
 }
@@ -98,7 +122,7 @@ PyObject* py_ue_landscape_export_to_raw_mesh(ue_PyUObject* self, PyObject* args)
 	if (!landscape)
 		return PyErr_Format(PyExc_Exception, "uobject is not a ULandscapeProxy");
 
-#if ENGINE_MINOR_VERSION > 21
+#if UEP_LEGACY_ENGINE_MINOR_VERSION > 21
 	return PyErr_Format(PyExc_Exception, "MeshDescription struct is still unsupported");;
 #else
 	FRawMesh raw_mesh;

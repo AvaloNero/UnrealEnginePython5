@@ -86,6 +86,7 @@ static void ue_py_fsocket_dealloc(ue_PyFSocket *self)
 
 	sock_stop_receiver(self);
 	sock_close(self);
+	Py_TYPE(self)->tp_free(reinterpret_cast<PyObject *>(self));
 
 }
 

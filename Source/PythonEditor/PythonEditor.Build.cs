@@ -4,16 +4,11 @@ namespace UnrealBuildTool.Rules
 {
     public class PythonEditor : ModuleRules
     {
-#if WITH_FORWARDED_MODULE_RULES_CTOR
         public PythonEditor(ReadOnlyTargetRules Target) : base(Target)
-#else
-        public PythonEditor(TargetInfo Target)
-#endif
         {
 
             PCHUsage = ModuleRules.PCHUsageMode.UseExplicitOrSharedPCHs;
-            string enableUnityBuild = System.Environment.GetEnvironmentVariable("UEP_ENABLE_UNITY_BUILD");
-            bFasterWithoutUnity = string.IsNullOrEmpty(enableUnityBuild);
+            bUseUnity = !string.IsNullOrEmpty(System.Environment.GetEnvironmentVariable("UEP_ENABLE_UNITY_BUILD"));
 
             PrivateIncludePaths.AddRange(
                 new string[] {
@@ -26,6 +21,7 @@ namespace UnrealBuildTool.Rules
                 {
                     "Core",
                     "CoreUObject",
+					"Engine",
                     "SlateCore",
                     "Slate",
                     "AssetTools",
@@ -37,6 +33,7 @@ namespace UnrealBuildTool.Rules
                     "DirectoryWatcher",
                     "LevelEditor",
                     "Projects",
+					"Python3",
                     "UnrealEnginePython"
                 }
                 );

@@ -43,7 +43,7 @@ PyObject *py_ue_quit_game(ue_PyUObject *self, PyObject * args)
 	if (!controller)
 		return PyErr_Format(PyExc_Exception, "unable to retrieve the first controller");
 
-#if ENGINE_MINOR_VERSION > 20
+#if UEP_LEGACY_ENGINE_MINOR_VERSION > 20
 	UKismetSystemLibrary::QuitGame(world, controller, EQuitPreference::Quit, false);
 #else
 	UKismetSystemLibrary::QuitGame(world, controller, EQuitPreference::Quit);
@@ -316,7 +316,7 @@ PyObject *py_ue_set_current_level(ue_PyUObject *self, PyObject * args)
 	if (!level)
 		return PyErr_Format(PyExc_Exception, "argument is not a ULevel");
 
-#if WITH_EDITOR || ENGINE_MINOR_VERSION < 22
+#if WITH_EDITOR || UEP_LEGACY_ENGINE_MINOR_VERSION < 22
 
 	if (world->SetCurrentLevel(level))
 		Py_RETURN_TRUE;
@@ -326,6 +326,14 @@ PyObject *py_ue_set_current_level(ue_PyUObject *self, PyObject * args)
 }
 
 #if WITH_EDITOR
+#if ENGINE_MAJOR_VERSION >= 5
+static FFolder MakeUEPActorFolder(UWorld& World, const char* Path)
+{
+	const FFolder WorldRoot = FFolder::GetWorldRootFolder(&World);
+	return FFolder(WorldRoot.GetRootObject(), FName(UTF8_TO_TCHAR(Path)));
+}
+#endif
+
 PyObject *py_ue_get_level_script_blueprint(ue_PyUObject *self, PyObject * args)
 {
 
@@ -349,16 +357,21 @@ PyObject *py_ue_world_create_folder(ue_PyUObject *self, PyObject * args)
 	if (!PyArg_ParseTuple(args, "s:world_create_folder", &path))
 		return nullptr;
 
-	if (!FActorFolders::IsAvailable())
-		return PyErr_Format(PyExc_Exception, "FActorFolders is not available");
-
 	UWorld *world = ue_get_uworld(self);
 	if (!world)
 		return PyErr_Format(PyExc_Exception, "unable to retrieve UWorld from uobject");
 
+#if ENGINE_MAJOR_VERSION >= 5
+	const FFolder Folder = MakeUEPActorFolder(*world, path);
+	FActorFolders::Get().CreateFolder(*world, Folder);
+#else
+	if (!FActorFolders::IsAvailable())
+		return PyErr_Format(PyExc_Exception, "FActorFolders is not available");
+
 	FName FolderPath = FName(UTF8_TO_TCHAR(path));
 
 	FActorFolders::Get().CreateFolder(*world, FolderPath);
+#endif
 
 	Py_RETURN_NONE;
 }
@@ -372,16 +385,21 @@ PyObject *py_ue_world_delete_folder(ue_PyUObject *self, PyObject * args)
 	if (!PyArg_ParseTuple(args, "s:world_delete_folder", &path))
 		return nullptr;
 
-	if (!FActorFolders::IsAvailable())
-		return PyErr_Format(PyExc_Exception, "FActorFolders is not available");
-
 	UWorld *world = ue_get_uworld(self);
 	if (!world)
 		return PyErr_Format(PyExc_Exception, "unable to retrieve UWorld from uobject");
 
+#if ENGINE_MAJOR_VERSION >= 5
+	const FFolder Folder = MakeUEPActorFolder(*world, path);
+	FActorFolders::Get().DeleteFolder(*world, Folder);
+#else
+	if (!FActorFolders::IsAvailable())
+		return PyErr_Format(PyExc_Exception, "FActorFolders is not available");
+
 	FName FolderPath = FName(UTF8_TO_TCHAR(path));
 
 	FActorFolders::Get().DeleteFolder(*world, FolderPath);
+#endif
 
 	Py_RETURN_NONE;
 }
@@ -396,18 +414,26 @@ PyObject *py_ue_world_rename_folder(ue_PyUObject *self, PyObject * args)
 	if (!PyArg_ParseTuple(args, "ss:world_rename_folder", &path, &new_path))
 		return nullptr;
 
-	if (!FActorFolders::IsAvailable())
-		return PyErr_Format(PyExc_Exception, "FActorFolders is not available");
-
 	UWorld *world = ue_get_uworld(self);
 	if (!world)
 		return PyErr_Format(PyExc_Exception, "unable to retrieve UWorld from uobject");
+
+#if ENGINE_MAJOR_VERSION >= 5
+	const FFolder Folder = MakeUEPActorFolder(*world, path);
+	const FFolder NewFolder = MakeUEPActorFolder(*world, new_path);
+
+	if (FActorFolders::Get().RenameFolderInWorld(*world, Folder, NewFolder))
+		Py_RETURN_TRUE;
+#else
+	if (!FActorFolders::IsAvailable())
+		return PyErr_Format(PyExc_Exception, "FActorFolders is not available");
 
 	FName FolderPath = FName(UTF8_TO_TCHAR(path));
 	FName NewFolderPath = FName(UTF8_TO_TCHAR(new_path));
 
 	if (FActorFolders::Get().RenameFolderInWorld(*world, FolderPath, NewFolderPath))
 		Py_RETURN_TRUE;
+#endif
 
 	Py_RETURN_FALSE;
 }
@@ -417,25 +443,32 @@ PyObject *py_ue_world_folders(ue_PyUObject *self, PyObject * args)
 
 	ue_py_check(self);
 
-	if (!FActorFolders::IsAvailable())
-		return PyErr_Format(PyExc_Exception, "FActorFolders is not available");
-
 	UWorld *world = ue_get_uworld(self);
 	if (!world)
 		return PyErr_Format(PyExc_Exception, "unable to retrieve UWorld from uobject");
 
-	const TMap<FName, FActorFolderProps> &Folders = FActorFolders::Get().GetFolderPropertiesForWorld(*world);
+#if ENGINE_MAJOR_VERSION >= 5
+	TArray<FName> FolderNames;
+	const FFolder WorldRoot = FFolder::GetWorldRootFolder(world);
+	FActorFolders::Get().ForEachFolderWithRootObject(*world, WorldRoot.GetRootObject(), [&FolderNames](const FFolder& Folder)
+	{
+		FolderNames.Add(Folder.GetPath());
+		return true;
+	});
+#else
+	if (!FActorFolders::IsAvailable())
+		return PyErr_Format(PyExc_Exception, "FActorFolders is not available");
 
-	PyObject *py_list = PyList_New(0);
+	const TMap<FName, FActorFolderProps> &Folders = FActorFolders::Get().GetFolderPropertiesForWorld(*world);
 
 	TArray<FName> FolderNames;
 	Folders.GenerateKeyArray(FolderNames);
-	
-	for (FName FolderName : FolderNames)
+#endif
+
+	PyObject *py_list = PyList_New(FolderNames.Num());
+	for (int32 FolderIndex = 0; FolderIndex < FolderNames.Num(); ++FolderIndex)
 	{
-		PyObject *py_str = PyUnicode_FromString(TCHAR_TO_UTF8(*FolderName.ToString()));
-		PyList_Append(py_list, py_str);
-		Py_DECREF(py_str);
+		PyList_SET_ITEM(py_list, FolderIndex, PyUnicode_FromString(TCHAR_TO_UTF8(*FolderNames[FolderIndex].ToString())));
 	}
 
 	return py_list;

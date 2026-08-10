@@ -1,0 +1,16 @@
+{
+  "FileVersion": 3,
+  "EngineAssociation": "5.8",
+  "Category": "Validation",
+  "Description": "Content-only host used to compile UnrealEnginePython as a foreign runtime plugin",
+  "Plugins": [
+    {
+      "Name": "UnrealEnginePython",
+      "Enabled": true
+    },
+    {
+      "Name": "PythonScriptPlugin",
+      "Enabled": false
+    }
+  ]
+}

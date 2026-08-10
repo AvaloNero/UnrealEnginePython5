@@ -3,13 +3,19 @@
 #if WITH_EDITOR
 
 #include "Developer/CollectionManager/Public/CollectionManagerModule.h"
+#include "Developer/CollectionManager/Public/ICollectionContainer.h"
+
+static ICollectionContainer& GetProjectCollectionContainer()
+{
+	return FCollectionManagerModule::GetModule().Get().GetProjectCollectionContainer().Get();
+}
 
 static PyObject *py_ue_icollection_manager_get_collections(PyObject *cls, PyObject * args)
 {
 	PyObject *py_list = PyList_New(0);
-	ICollectionManager &CollectionManager = FCollectionManagerModule::GetModule().Get();
+	ICollectionContainer &CollectionContainer = GetProjectCollectionContainer();
 	TArray<FCollectionNameType> collections;
-	CollectionManager.GetCollections(collections);
+	CollectionContainer.GetCollections(collections);
 	for (FCollectionNameType name_type : collections)
 	{
 		PyList_Append(py_list, Py_BuildValue((char *)"(si)", TCHAR_TO_UTF8(*name_type.Name.ToString()), (int)name_type.Type));
@@ -25,9 +31,9 @@ static PyObject *py_ue_icollection_manager_get_parent_collection(PyObject *cls, 
 	if (!PyArg_ParseTuple(args, "si", &name, &type))
 		return nullptr;
 
-	ICollectionManager &CollectionManager = FCollectionManagerModule::GetModule().Get();
+	ICollectionContainer &CollectionContainer = GetProjectCollectionContainer();
 
-	TOptional<FCollectionNameType> name_type = CollectionManager.GetParentCollection(FName(UTF8_TO_TCHAR(name)), (ECollectionShareType::Type)type);
+	TOptional<FCollectionNameType> name_type = CollectionContainer.GetParentCollection(FName(UTF8_TO_TCHAR(name)), (ECollectionShareType::Type)type);
 	if (name_type.IsSet())
 	{
 		return Py_BuildValue((char *)"(si)", TCHAR_TO_UTF8(*name_type.GetValue().Name.ToString()), (int)name_type.GetValue().Type);
@@ -38,9 +44,9 @@ static PyObject *py_ue_icollection_manager_get_parent_collection(PyObject *cls, 
 static PyObject *py_ue_icollection_manager_get_root_collections(PyObject *cls, PyObject * args)
 {
 	PyObject *py_list = PyList_New(0);
-	ICollectionManager &CollectionManager = FCollectionManagerModule::GetModule().Get();
+	ICollectionContainer &CollectionContainer = GetProjectCollectionContainer();
 	TArray<FCollectionNameType> collections;
-	CollectionManager.GetRootCollections(collections);
+	CollectionContainer.GetRootCollections(collections);
 	for (FCollectionNameType name_type : collections)
 	{
 		PyList_Append(py_list, Py_BuildValue((char *)"(si)", TCHAR_TO_UTF8(*name_type.Name.ToString()), (int)name_type.Type));
@@ -57,9 +63,9 @@ static PyObject *py_ue_icollection_manager_get_child_collection_names(PyObject *
 	if (!PyArg_ParseTuple(args, "sii", &name, &type, &child_type))
 		return nullptr;
 	PyObject *py_list = PyList_New(0);
-	ICollectionManager &CollectionManager = FCollectionManagerModule::GetModule().Get();
+	ICollectionContainer &CollectionContainer = GetProjectCollectionContainer();
 	TArray<FName> names;
-	CollectionManager.GetChildCollectionNames(FName(UTF8_TO_TCHAR(name)), (ECollectionShareType::Type)type, (ECollectionShareType::Type)child_type, names);
+	CollectionContainer.GetChildCollectionNames(FName(UTF8_TO_TCHAR(name)), (ECollectionShareType::Type)type, (ECollectionShareType::Type)child_type, names);
 	for (FName cname : names)
 	{
 		PyList_Append(py_list, PyUnicode_FromString(TCHAR_TO_UTF8(*cname.ToString())));
@@ -76,9 +82,9 @@ static PyObject *py_ue_icollection_manager_get_child_collections(PyObject *cls, 
 		return nullptr;
 
 	PyObject *py_list = PyList_New(0);
-	ICollectionManager &CollectionManager = FCollectionManagerModule::GetModule().Get();
+	ICollectionContainer &CollectionContainer = GetProjectCollectionContainer();
 	TArray<FCollectionNameType> collections;
-	CollectionManager.GetChildCollections(FName(UTF8_TO_TCHAR(name)), (ECollectionShareType::Type)type, collections);
+	CollectionContainer.GetChildCollections(FName(UTF8_TO_TCHAR(name)), (ECollectionShareType::Type)type, collections);
 	for (FCollectionNameType name_type : collections)
 	{
 		PyList_Append(py_list, Py_BuildValue((char *)"(si)", TCHAR_TO_UTF8(*name_type.Name.ToString()), (int)name_type.Type));
@@ -93,9 +99,9 @@ static PyObject *py_ue_icollection_manager_get_collection_names(PyObject *cls, P
 	if (!PyArg_ParseTuple(args, "i", &type))
 		return nullptr;
 	PyObject *py_list = PyList_New(0);
-	ICollectionManager &CollectionManager = FCollectionManagerModule::GetModule().Get();
+	ICollectionContainer &CollectionContainer = GetProjectCollectionContainer();
 	TArray<FName> names;
-	CollectionManager.GetCollectionNames((ECollectionShareType::Type)type, names);
+	CollectionContainer.GetCollectionNames((ECollectionShareType::Type)type, names);
 	for (FName name : names)
 	{
 		PyList_Append(py_list, PyUnicode_FromString(TCHAR_TO_UTF8(*name.ToString())));
@@ -110,9 +116,9 @@ static PyObject *py_ue_icollection_manager_get_root_collection_names(PyObject *c
 	if (!PyArg_ParseTuple(args, "i", &type))
 		return nullptr;
 	PyObject *py_list = PyList_New(0);
-	ICollectionManager &CollectionManager = FCollectionManagerModule::GetModule().Get();
+	ICollectionContainer &CollectionContainer = GetProjectCollectionContainer();
 	TArray<FName> names;
-	CollectionManager.GetRootCollectionNames((ECollectionShareType::Type)type, names);
+	CollectionContainer.GetRootCollectionNames((ECollectionShareType::Type)type, names);
 	for (FName name : names)
 	{
 		PyList_Append(py_list, PyUnicode_FromString(TCHAR_TO_UTF8(*name.ToString())));
@@ -128,9 +134,9 @@ static PyObject *py_ue_icollection_manager_create_static_collection(PyObject *cl
 	if (!PyArg_ParseTuple(args, "si", &name, &type))
 		return nullptr;
 
-	ICollectionManager &CollectionManager = FCollectionManagerModule::GetModule().Get();
+	ICollectionContainer &CollectionContainer = GetProjectCollectionContainer();
 
-	if (CollectionManager.CreateCollection(FName(UTF8_TO_TCHAR(name)), (ECollectionShareType::Type)type, ECollectionStorageMode::Static))
+	if (CollectionContainer.CreateCollection(FName(UTF8_TO_TCHAR(name)), (ECollectionShareType::Type)type, ECollectionStorageMode::Static))
 		Py_RETURN_TRUE;
 	Py_RETURN_FALSE;
 }
@@ -143,9 +149,9 @@ static PyObject *py_ue_icollection_manager_create_dynamic_collection(PyObject *c
 	if (!PyArg_ParseTuple(args, "si", &name, &type))
 		return nullptr;
 
-	ICollectionManager &CollectionManager = FCollectionManagerModule::GetModule().Get();
+	ICollectionContainer &CollectionContainer = GetProjectCollectionContainer();
 
-	if (CollectionManager.CreateCollection(FName(UTF8_TO_TCHAR(name)), (ECollectionShareType::Type)type, ECollectionStorageMode::Dynamic))
+	if (CollectionContainer.CreateCollection(FName(UTF8_TO_TCHAR(name)), (ECollectionShareType::Type)type, ECollectionStorageMode::Dynamic))
 		Py_RETURN_TRUE;
 	Py_RETURN_FALSE;
 }
@@ -159,9 +165,9 @@ static PyObject *py_ue_icollection_manager_create_collection(PyObject *cls, PyOb
 	if (!PyArg_ParseTuple(args, "sii", &name, &type, &storage))
 		return nullptr;
 
-	ICollectionManager &CollectionManager = FCollectionManagerModule::GetModule().Get();
+	ICollectionContainer &CollectionContainer = GetProjectCollectionContainer();
 
-	if (CollectionManager.CreateCollection(FName(UTF8_TO_TCHAR(name)), (ECollectionShareType::Type)type, (ECollectionStorageMode::Type)storage))
+	if (CollectionContainer.CreateCollection(FName(UTF8_TO_TCHAR(name)), (ECollectionShareType::Type)type, (ECollectionStorageMode::Type)storage))
 		Py_RETURN_TRUE;
 	Py_RETURN_FALSE;
 }
@@ -176,9 +182,9 @@ static PyObject *py_ue_icollection_manager_reparent_collection(PyObject *cls, Py
 	if (!PyArg_ParseTuple(args, "sisi", &name, &type, &parent, &parent_type))
 		return nullptr;
 
-	ICollectionManager &CollectionManager = FCollectionManagerModule::GetModule().Get();
+	ICollectionContainer &CollectionContainer = GetProjectCollectionContainer();
 
-	if (CollectionManager.ReparentCollection(
+	if (CollectionContainer.ReparentCollection(
 		FName(UTF8_TO_TCHAR(name)),
 		(ECollectionShareType::Type)type,
 		FName(UTF8_TO_TCHAR(parent)),
@@ -198,9 +204,9 @@ static PyObject *py_ue_icollection_manager_rename_collection(PyObject *cls, PyOb
 	if (!PyArg_ParseTuple(args, "sisi", &name, &type, &new_name, &new_type))
 		return nullptr;
 
-	ICollectionManager &CollectionManager = FCollectionManagerModule::GetModule().Get();
+	ICollectionContainer &CollectionContainer = GetProjectCollectionContainer();
 
-	if (CollectionManager.RenameCollection(
+	if (CollectionContainer.RenameCollection(
 		FName(UTF8_TO_TCHAR(name)),
 		(ECollectionShareType::Type)type,
 		FName(UTF8_TO_TCHAR(new_name)),
@@ -219,12 +225,12 @@ static PyObject *py_ue_icollection_manager_remove_from_collection(PyObject *cls,
 	if (!PyArg_ParseTuple(args, "sis", &name, &type, &object_path))
 		return nullptr;
 
-	ICollectionManager &CollectionManager = FCollectionManagerModule::GetModule().Get();
+	ICollectionContainer &CollectionContainer = GetProjectCollectionContainer();
 
-	if (CollectionManager.RemoveFromCollection(
+	if (CollectionContainer.RemoveFromCollection(
 		FName(UTF8_TO_TCHAR(name)),
 		(ECollectionShareType::Type)type,
-		FName(UTF8_TO_TCHAR(object_path))
+		FSoftObjectPath(UTF8_TO_TCHAR(object_path))
 	))
 		Py_RETURN_TRUE;
 	Py_RETURN_FALSE;
@@ -239,12 +245,12 @@ static PyObject *py_ue_icollection_manager_add_to_collection(PyObject *cls, PyOb
 	if (!PyArg_ParseTuple(args, "sis", &name, &type, &object_path))
 		return nullptr;
 
-	ICollectionManager &CollectionManager = FCollectionManagerModule::GetModule().Get();
+	ICollectionContainer &CollectionContainer = GetProjectCollectionContainer();
 
-	if (CollectionManager.AddToCollection(
+	if (CollectionContainer.AddToCollection(
 		FName(UTF8_TO_TCHAR(name)),
 		(ECollectionShareType::Type)type,
-		FName(UTF8_TO_TCHAR(object_path))
+		FSoftObjectPath(UTF8_TO_TCHAR(object_path))
 	))
 		Py_RETURN_TRUE;
 	Py_RETURN_FALSE;
@@ -258,9 +264,9 @@ static PyObject *py_ue_icollection_manager_collection_exists(PyObject *cls, PyOb
 	if (!PyArg_ParseTuple(args, "si", &name, &type))
 		return nullptr;
 
-	ICollectionManager &CollectionManager = FCollectionManagerModule::GetModule().Get();
+	ICollectionContainer &CollectionContainer = GetProjectCollectionContainer();
 
-	if (CollectionManager.CollectionExists(
+	if (CollectionContainer.CollectionExists(
 		FName(UTF8_TO_TCHAR(name)),
 		(ECollectionShareType::Type)type
 	))
@@ -276,10 +282,10 @@ static PyObject *py_ue_icollection_manager_create_unique_collection_name(PyObjec
 	if (!PyArg_ParseTuple(args, "si", &base_name, &type))
 		return nullptr;
 
-	ICollectionManager &CollectionManager = FCollectionManagerModule::GetModule().Get();
+	ICollectionContainer &CollectionContainer = GetProjectCollectionContainer();
 
 	FName name;
-	CollectionManager.CreateUniqueCollectionName(
+	CollectionContainer.CreateUniqueCollectionName(
 		FName(UTF8_TO_TCHAR(base_name)),
 		(ECollectionShareType::Type)type,
 		name);
@@ -295,9 +301,9 @@ static PyObject *py_ue_icollection_manager_destroy_collection(PyObject *cls, PyO
 	if (!PyArg_ParseTuple(args, "si", &name, &type))
 		return nullptr;
 
-	ICollectionManager &CollectionManager = FCollectionManagerModule::GetModule().Get();
+	ICollectionContainer &CollectionContainer = GetProjectCollectionContainer();
 
-	if (CollectionManager.DestroyCollection(
+	if (CollectionContainer.DestroyCollection(
 		FName(UTF8_TO_TCHAR(name)),
 		(ECollectionShareType::Type)type))
 		Py_RETURN_TRUE;
@@ -307,9 +313,9 @@ static PyObject *py_ue_icollection_manager_destroy_collection(PyObject *cls, PyO
 
 static PyObject *py_ue_icollection_manager_has_collections(PyObject *cls, PyObject * args)
 {
-	ICollectionManager &CollectionManager = FCollectionManagerModule::GetModule().Get();
+	ICollectionContainer &CollectionContainer = GetProjectCollectionContainer();
 
-	if (CollectionManager.HasCollections())
+	if (CollectionContainer.HasCollections())
 		Py_RETURN_TRUE;
 
 	Py_RETURN_FALSE;
@@ -323,9 +329,9 @@ static PyObject *py_ue_icollection_manager_empty_collection(PyObject *cls, PyObj
 	if (!PyArg_ParseTuple(args, "si", &name, &type))
 		return nullptr;
 
-	ICollectionManager &CollectionManager = FCollectionManagerModule::GetModule().Get();
+	ICollectionContainer &CollectionContainer = GetProjectCollectionContainer();
 
-	if (CollectionManager.EmptyCollection(
+	if (CollectionContainer.EmptyCollection(
 		FName(UTF8_TO_TCHAR(name)),
 		(ECollectionShareType::Type)type))
 		Py_RETURN_TRUE;
@@ -341,10 +347,10 @@ static PyObject *py_ue_icollection_manager_get_dynamic_query_text(PyObject *cls,
 	if (!PyArg_ParseTuple(args, "si", &name, &type))
 		return nullptr;
 
-	ICollectionManager &CollectionManager = FCollectionManagerModule::GetModule().Get();
+	ICollectionContainer &CollectionContainer = GetProjectCollectionContainer();
 
 	FString query_text;
-	if (!CollectionManager.GetDynamicQueryText(
+	if (!CollectionContainer.GetDynamicQueryText(
 		FName(UTF8_TO_TCHAR(name)),
 		(ECollectionShareType::Type)type,
 		query_text))
@@ -364,25 +370,15 @@ static PyObject *py_ue_icollection_manager_set_dynamic_query_text(PyObject *cls,
 	if (!PyArg_ParseTuple(args, "sis", &name, &type, &query_text))
 		return nullptr;
 
-	ICollectionManager &CollectionManager = FCollectionManagerModule::GetModule().Get();
+	ICollectionContainer &CollectionContainer = GetProjectCollectionContainer();
 
-	if (CollectionManager.SetDynamicQueryText(
+	if (CollectionContainer.SetDynamicQueryText(
 		FName(UTF8_TO_TCHAR(name)),
 		(ECollectionShareType::Type)type,
 		FString(UTF8_TO_TCHAR(query_text))))
 		Py_RETURN_TRUE;
 
 	Py_RETURN_FALSE;
-}
-
-static PyObject *py_ue_icollection_manager_get_last_error(PyObject *cls, PyObject * args)
-{
-
-	ICollectionManager &CollectionManager = FCollectionManagerModule::GetModule().Get();
-
-	FText error = CollectionManager.GetLastError();
-
-	return PyUnicode_FromString(TCHAR_TO_UTF8(*error.ToString()));
 }
 
 static PyObject *py_ue_icollection_manager_get_assets_in_collection(PyObject *cls, PyObject * args)
@@ -394,12 +390,12 @@ static PyObject *py_ue_icollection_manager_get_assets_in_collection(PyObject *cl
 	if (!PyArg_ParseTuple(args, "si|i", &name, &type, &recursion))
 		return nullptr;
 
-	ICollectionManager &CollectionManager = FCollectionManagerModule::GetModule().Get();
-	TArray<FName> paths;
-	if (CollectionManager.GetAssetsInCollection(FName(UTF8_TO_TCHAR(name)), (ECollectionShareType::Type)type, paths, (ECollectionRecursionFlags::Flags)recursion))
+	ICollectionContainer &CollectionContainer = GetProjectCollectionContainer();
+	TArray<FSoftObjectPath> paths;
+	if (CollectionContainer.GetAssetsInCollection(FName(UTF8_TO_TCHAR(name)), (ECollectionShareType::Type)type, paths, (ECollectionRecursionFlags::Flags)recursion))
 	{
 		PyObject *py_list = PyList_New(0);
-		for (FName path : paths)
+		for (const FSoftObjectPath& path : paths)
 		{
 			PyList_Append(py_list, PyUnicode_FromString(TCHAR_TO_UTF8(*path.ToString())));
 		}
@@ -419,12 +415,12 @@ static PyObject *py_ue_icollection_manager_get_objects_in_collection(PyObject *c
 
 
 
-	ICollectionManager &CollectionManager = FCollectionManagerModule::GetModule().Get();
-	TArray<FName> paths;
-	if (CollectionManager.GetObjectsInCollection(FName(UTF8_TO_TCHAR(name)), (ECollectionShareType::Type)type, paths, (ECollectionRecursionFlags::Flags)recursion))
+	ICollectionContainer &CollectionContainer = GetProjectCollectionContainer();
+	TArray<FSoftObjectPath> paths;
+	if (CollectionContainer.GetObjectsInCollection(FName(UTF8_TO_TCHAR(name)), (ECollectionShareType::Type)type, paths, (ECollectionRecursionFlags::Flags)recursion))
 	{
 		PyObject *py_list = PyList_New(0);
-		for (FName path : paths)
+		for (const FSoftObjectPath& path : paths)
 		{
 			PyList_Append(py_list, PyUnicode_FromString(TCHAR_TO_UTF8(*path.ToString())));
 		}
@@ -444,12 +440,12 @@ static PyObject *py_ue_icollection_manager_get_classes_in_collection(PyObject *c
 
 
 
-	ICollectionManager &CollectionManager = FCollectionManagerModule::GetModule().Get();
-	TArray<FName> paths;
-	if (CollectionManager.GetClassesInCollection(FName(UTF8_TO_TCHAR(name)), (ECollectionShareType::Type)type, paths, (ECollectionRecursionFlags::Flags)recursion))
+	ICollectionContainer &CollectionContainer = GetProjectCollectionContainer();
+	TArray<FTopLevelAssetPath> paths;
+	if (CollectionContainer.GetClassesInCollection(FName(UTF8_TO_TCHAR(name)), (ECollectionShareType::Type)type, paths, (ECollectionRecursionFlags::Flags)recursion))
 	{
 		PyObject *py_list = PyList_New(0);
-		for (FName path : paths)
+		for (const FTopLevelAssetPath& path : paths)
 		{
 			PyList_Append(py_list, PyUnicode_FromString(TCHAR_TO_UTF8(*path.ToString())));
 		}

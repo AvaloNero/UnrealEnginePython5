@@ -154,8 +154,10 @@ PyObject *py_ue_create_player(ue_PyUObject *self, PyObject * args)
 	APlayerController *controller = UGameplayStatics::CreatePlayer(world, controller_id, b_spawn_pawn);
 	if (!controller)
 		return PyErr_Format(PyExc_Exception, "unable to create a new player from controller %d", controller_id);
+	if (!controller->PlayerState)
+		return PyErr_Format(PyExc_Exception, "new player controller has no PlayerState");
 
-	return PyLong_FromLong(controller->PlayerState->PlayerId);
+	return PyLong_FromLong(controller->PlayerState->GetPlayerId());
 }
 
 PyObject *py_ue_get_num_players(ue_PyUObject *self, PyObject * args)
@@ -166,14 +168,14 @@ PyObject *py_ue_get_num_players(ue_PyUObject *self, PyObject * args)
 	UWorld *world = ue_get_uworld(self);
 	if (!world)
 		return PyErr_Format(PyExc_Exception, "unable to retrieve UWorld from uobject");
-#if ENGINE_MINOR_VERSION < 14
+#if UEP_LEGACY_ENGINE_MINOR_VERSION < 14
 	AGameMode *game_mode = world->GetAuthGameMode();
 #else
 	AGameModeBase *game_mode = world->GetAuthGameMode();
 #endif
 	if (!game_mode)
 		return PyErr_Format(PyExc_Exception, "unable to retrieve GameMode from world");
-#if ENGINE_MINOR_VERSION < 14
+#if UEP_LEGACY_ENGINE_MINOR_VERSION < 14
 	return PyLong_FromLong(game_mode->NumPlayers);
 #else
 	return PyLong_FromLong(game_mode->GetNumPlayers());
@@ -188,14 +190,14 @@ PyObject *py_ue_get_num_spectators(ue_PyUObject *self, PyObject * args)
 	UWorld *world = ue_get_uworld(self);
 	if (!world)
 		return PyErr_Format(PyExc_Exception, "unable to retrieve UWorld from uobject");
-#if ENGINE_MINOR_VERSION < 14
+#if UEP_LEGACY_ENGINE_MINOR_VERSION < 14
 	AGameMode *game_mode = world->GetAuthGameMode();
 #else
 	AGameModeBase *game_mode = world->GetAuthGameMode();
 #endif
 	if (!game_mode)
 		return PyErr_Format(PyExc_Exception, "unable to retrieve GameMode from world");
-#if ENGINE_MINOR_VERSION < 14
+#if UEP_LEGACY_ENGINE_MINOR_VERSION < 14
 	return PyLong_FromLong(game_mode->NumSpectators);
 #else
 	return PyLong_FromLong(game_mode->GetNumSpectators());

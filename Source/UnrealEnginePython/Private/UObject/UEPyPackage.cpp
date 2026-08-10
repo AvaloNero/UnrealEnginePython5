@@ -23,7 +23,7 @@ PyObject *py_ue_package_get_filename(ue_PyUObject *self, PyObject * args)
 		return PyErr_Format(PyExc_Exception, "uobject is not an UPackage");
 
 	FString Filename;
-	if (!FPackageName::DoesPackageExist(package->GetPathName(), nullptr, &Filename))
+	if (!FPackageName::DoesPackageExist(package->GetName(), &Filename))
 		return PyErr_Format(PyExc_Exception, "package does not exist");
 
 	return PyUnicode_FromString(TCHAR_TO_UTF8(*Filename));

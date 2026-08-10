@@ -5,14 +5,16 @@
 #include "SPythonProjectEditor.h"
 #include "Runtime/Slate/Public/Widgets/Docking/SDockTab.h"
 #include "PythonProjectEditorToolbar.h"
-#include "Editor/Kismet/Public/WorkflowOrientedApp/WorkflowUObjectDocuments.h"
-#include "Editor/Kismet/Public/WorkflowOrientedApp/ApplicationMode.h"
+#include "WorkflowOrientedApp/WorkflowUObjectDocuments.h"
+#include "WorkflowOrientedApp/ApplicationMode.h"
 #include "PythonProjectItem.h"
 #include "PythonEditorStyle.h"
 #include "PythonProject.h"
 #include "PythonProjectEditorCommands.h"
 #include "Runtime/Core/Public/HAL/PlatformFilemanager.h"
 #include "Runtime/Core/Public/Misc/MessageDialog.h"
+#include "Editor.h"
+#include "Subsystems/AssetEditorSubsystem.h"
 #define LOCTEXT_NAMESPACE "PythonEditor"
 
 TWeakPtr<FPythonProjectEditor> FPythonProjectEditor::PythonEditor;
@@ -150,27 +152,20 @@ FBasicPythonEditorMode::FBasicPythonEditorMode(TSharedPtr<class FPythonProjectEd
 			->SetOrientation(Orient_Vertical)
 			->Split
 			(
-				FTabManager::NewStack()
-				->SetSizeCoefficient(0.1f)
-				->SetHideTabWell(true)
-				->AddTab(InPythonEditor->GetToolbarTabId(), ETabState::OpenedTab)
-				)
-			->Split
-			(
 				FTabManager::NewSplitter()
 				->SetSizeCoefficient(0.9f)
 				->SetOrientation(Orient_Horizontal)
 				->Split
 				(
 					FTabManager::NewStack()
-					->SetSizeCoefficient(0.2)
+					->SetSizeCoefficient(0.2f)
 					->SetHideTabWell(true)
 					->AddTab(PythonEditorTabs::ProjectViewID, ETabState::OpenedTab)
 					)
 				->Split
 				(
 					FTabManager::NewStack()
-					->SetSizeCoefficient(0.8)
+					->SetSizeCoefficient(0.8f)
 					->SetHideTabWell(false)
 					->AddTab(PythonEditorTabs::PythonViewID, ETabState::ClosedTab)
 
@@ -188,7 +183,7 @@ void FBasicPythonEditorMode::RegisterTabFactories(TSharedPtr<FTabManager> InTabM
 	Editor->RegisterToolbarTab(InTabManager.ToSharedRef());
 	Editor->PushTabFactories(ProjectViewTabFactories);
 
-	FApplicationMode::RegisterTabFactories(InTabManager);
+	RegisterTabFactoriesWithAppAndManager(Editor.Get(), InTabManager.ToSharedRef());
 }
 
 FPythonProjectEditor::FPythonProjectEditor()
@@ -209,7 +204,13 @@ void FPythonProjectEditor::RegisterToolbarTab(const TSharedRef<class FTabManager
 
 void FPythonProjectEditor::InitPythonEditor(const EToolkitMode::Type Mode, const TSharedPtr< class IToolkitHost >& InitToolkitHost, class UPythonProject* PythonProject)
 {
-	FAssetEditorManager::Get().CloseOtherEditors(PythonProject, this);
+	if (GEditor)
+	{
+		if (UAssetEditorSubsystem* AssetEditorSubsystem = GEditor->GetEditorSubsystem<UAssetEditorSubsystem>())
+		{
+			AssetEditorSubsystem->CloseOtherEditors(PythonProject, this);
+		}
+	}
 	PythonProjectBeingEdited = PythonProject;
 
 	TSharedPtr<FPythonProjectEditor> ThisPtr(SharedThis(this));
@@ -331,8 +332,7 @@ FLinearColor FPythonProjectEditor::GetWorldCentricTabColorScale() const
 
 void FPythonProjectEditor::AddReferencedObjects(FReferenceCollector& Collector)
 {
-	UPythonProject* PythonProject = PythonProjectBeingEdited.Get();
-	Collector.AddReferencedObject(PythonProject);
+	Collector.AddReferencedObject(PythonProjectBeingEdited);
 }
 
 TSharedRef<SWidget> FPythonProjectEditor::CreatePythonEditorWidget(TSharedRef<FTabInfo> TabInfo, UPythonProjectItem* Item)

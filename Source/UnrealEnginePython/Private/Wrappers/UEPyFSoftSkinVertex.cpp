@@ -21,7 +21,7 @@ static int py_ue_fsoft_skin_vertex_set_color(ue_PyFSoftSkinVertex *self, PyObjec
 
 static PyObject *py_ue_fsoft_skin_vertex_get_position(ue_PyFSoftSkinVertex *self, void *closure)
 {
-	return py_ue_new_fvector(self->ss_vertex.Position);
+	return py_ue_new_fvector(FVector(self->ss_vertex.Position));
 }
 
 static int py_ue_fsoft_skin_vertex_set_position(ue_PyFSoftSkinVertex *self, PyObject *value, void *closure)
@@ -29,7 +29,7 @@ static int py_ue_fsoft_skin_vertex_set_position(ue_PyFSoftSkinVertex *self, PyOb
 	ue_PyFVector *py_vec = py_ue_is_fvector(value);
 	if (py_vec)
 	{
-		self->ss_vertex.Position = py_vec->vec;
+		self->ss_vertex.Position = FVector3f(py_vec->vec);
 		return 0;
 	}
 	PyErr_SetString(PyExc_TypeError, "value is not a FVector");
@@ -38,7 +38,7 @@ static int py_ue_fsoft_skin_vertex_set_position(ue_PyFSoftSkinVertex *self, PyOb
 
 static PyObject *py_ue_fsoft_skin_vertex_get_tangent_x(ue_PyFSoftSkinVertex *self, void *closure)
 {
-	return py_ue_new_fvector(self->ss_vertex.TangentX);
+	return py_ue_new_fvector(FVector(self->ss_vertex.TangentX));
 }
 
 static int py_ue_fsoft_skin_vertex_set_tangent_x(ue_PyFSoftSkinVertex *self, PyObject *value, void *closure)
@@ -46,7 +46,7 @@ static int py_ue_fsoft_skin_vertex_set_tangent_x(ue_PyFSoftSkinVertex *self, PyO
 	ue_PyFVector *py_vec = py_ue_is_fvector(value);
 	if (py_vec)
 	{
-		self->ss_vertex.TangentX = py_vec->vec;
+		self->ss_vertex.TangentX = FVector3f(py_vec->vec);
 		return 0;
 	}
 	PyErr_SetString(PyExc_TypeError, "value is not a FVector");
@@ -55,7 +55,7 @@ static int py_ue_fsoft_skin_vertex_set_tangent_x(ue_PyFSoftSkinVertex *self, PyO
 
 static PyObject *py_ue_fsoft_skin_vertex_get_tangent_y(ue_PyFSoftSkinVertex *self, void *closure)
 {
-	return py_ue_new_fvector(self->ss_vertex.TangentX);
+	return py_ue_new_fvector(FVector(self->ss_vertex.TangentY));
 }
 
 static int py_ue_fsoft_skin_vertex_set_tangent_y(ue_PyFSoftSkinVertex *self, PyObject *value, void *closure)
@@ -63,7 +63,7 @@ static int py_ue_fsoft_skin_vertex_set_tangent_y(ue_PyFSoftSkinVertex *self, PyO
 	ue_PyFVector *py_vec = py_ue_is_fvector(value);
 	if (py_vec)
 	{
-		self->ss_vertex.TangentY = py_vec->vec;
+		self->ss_vertex.TangentY = FVector3f(py_vec->vec);
 		return 0;
 	}
 	PyErr_SetString(PyExc_TypeError, "value is not a FVector");
@@ -72,7 +72,10 @@ static int py_ue_fsoft_skin_vertex_set_tangent_y(ue_PyFSoftSkinVertex *self, PyO
 
 static PyObject *py_ue_fsoft_skin_vertex_get_tangent_z(ue_PyFSoftSkinVertex *self, void *closure)
 {
-	return py_ue_new_fvector(self->ss_vertex.TangentZ);
+	return py_ue_new_fvector(FVector(
+		self->ss_vertex.TangentZ.X,
+		self->ss_vertex.TangentZ.Y,
+		self->ss_vertex.TangentZ.Z));
 }
 
 static int py_ue_fsoft_skin_vertex_set_tangent_z(ue_PyFSoftSkinVertex *self, PyObject *value, void *closure)
@@ -80,81 +83,117 @@ static int py_ue_fsoft_skin_vertex_set_tangent_z(ue_PyFSoftSkinVertex *self, PyO
 	ue_PyFVector *py_vec = py_ue_is_fvector(value);
 	if (py_vec)
 	{
-		self->ss_vertex.TangentZ = py_vec->vec;
+		// TangentZ.W stores the tangent basis determinant sign. The Python API
+		// historically exposes TangentZ as an FVector, so preserve that metadata.
+		self->ss_vertex.TangentZ.X = static_cast<float>(py_vec->vec.X);
+		self->ss_vertex.TangentZ.Y = static_cast<float>(py_vec->vec.Y);
+		self->ss_vertex.TangentZ.Z = static_cast<float>(py_vec->vec.Z);
 		return 0;
 	}
 	PyErr_SetString(PyExc_TypeError, "value is not a FVector");
 	return -1;
 }
 
+static PyObject *py_ue_fsoft_skin_vertex_get_uint16_array(const uint16 *data, int32 num)
+{
+	PyObject *py_tuple = PyTuple_New(num);
+	if (!py_tuple)
+		return nullptr;
+
+	for (int32 index = 0; index < num; ++index)
+	{
+		PyObject *py_value = PyLong_FromUnsignedLong(data[index]);
+		if (!py_value)
+		{
+			Py_DECREF(py_tuple);
+			return nullptr;
+		}
+		PyTuple_SET_ITEM(py_tuple, index, py_value);
+	}
+	return py_tuple;
+}
+
+static int py_ue_fsoft_skin_vertex_set_uint16_array(uint16 *data, int32 num, PyObject *value)
+{
+	PyObject *py_iter = PyObject_GetIter(value);
+	if (!py_iter)
+	{
+		PyErr_SetString(PyExc_TypeError, "value is not an iterable of numbers");
+		return -1;
+	}
+
+	int32 pos = 0;
+	while (pos < num)
+	{
+		PyObject *py_item = PyIter_Next(py_iter);
+		if (!py_item)
+			break;
+
+		if (!PyNumber_Check(py_item))
+		{
+			Py_DECREF(py_item);
+			Py_DECREF(py_iter);
+			PyErr_SetString(PyExc_TypeError, "value is not an iterable of numbers");
+			return -1;
+		}
+
+		PyObject *py_num = PyNumber_Long(py_item);
+		Py_DECREF(py_item);
+		if (!py_num)
+		{
+			Py_DECREF(py_iter);
+			return -1;
+		}
+
+		const unsigned long raw_value = PyLong_AsUnsignedLong(py_num);
+		Py_DECREF(py_num);
+		if (PyErr_Occurred())
+		{
+			Py_DECREF(py_iter);
+			return -1;
+		}
+		if (raw_value > MAX_uint16)
+		{
+			Py_DECREF(py_iter);
+			PyErr_SetString(PyExc_OverflowError, "influence value does not fit in uint16");
+			return -1;
+		}
+
+		data[pos++] = static_cast<uint16>(raw_value);
+	}
+
+	Py_DECREF(py_iter);
+	return PyErr_Occurred() ? -1 : 0;
+}
+
 static PyObject *py_ue_fsoft_skin_vertex_get_influence_bones(ue_PyFSoftSkinVertex *self, void *closure)
 {
-	uint8 *data = self->ss_vertex.InfluenceBones;
-	return Py_BuildValue((char*)"(iiiiiiii)", data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7]);
+	return py_ue_fsoft_skin_vertex_get_uint16_array(
+		self->ss_vertex.InfluenceBones,
+		UE_ARRAY_COUNT(self->ss_vertex.InfluenceBones));
 }
 
 static int py_ue_fsoft_skin_vertex_set_influence_bones(ue_PyFSoftSkinVertex *self, PyObject *value, void *closure)
 {
-	PyObject *py_iter = PyObject_GetIter(value);
-	int pos = 0;
-	if (py_iter)
-	{
-		while (PyObject *py_item = PyIter_Next(py_iter))
-		{
-			if (!PyNumber_Check(py_item))
-			{
-				Py_DECREF(py_iter);
-				PyErr_SetString(PyExc_TypeError, "value is not an iterable of numbers");
-				return -1;
-			}
-			PyObject *py_num = PyNumber_Long(py_item);
-			uint8 num = PyLong_AsUnsignedLong(py_num);
-			Py_DECREF(py_num);
-			self->ss_vertex.InfluenceBones[pos] = num;
-			pos++;
-			if (pos >= MAX_TOTAL_INFLUENCES)
-				break;
-		}
-		Py_DECREF(py_iter);
-		return 0;
-	}
-	PyErr_SetString(PyExc_TypeError, "value is not an iterable of numbers");
-	return -1;
+	return py_ue_fsoft_skin_vertex_set_uint16_array(
+		self->ss_vertex.InfluenceBones,
+		UE_ARRAY_COUNT(self->ss_vertex.InfluenceBones),
+		value);
 }
 
 static PyObject *py_ue_fsoft_skin_vertex_get_influence_weights(ue_PyFSoftSkinVertex *self, void *closure)
 {
-	uint8 *data = self->ss_vertex.InfluenceWeights;
-	return Py_BuildValue((char*)"(iiiiiiii)", data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7]);
+	return py_ue_fsoft_skin_vertex_get_uint16_array(
+		self->ss_vertex.InfluenceWeights,
+		UE_ARRAY_COUNT(self->ss_vertex.InfluenceWeights));
 }
 
 static int py_ue_fsoft_skin_vertex_set_influence_weights(ue_PyFSoftSkinVertex *self, PyObject *value, void *closure)
 {
-	PyObject *py_iter = PyObject_GetIter(value);
-	int pos = 0;
-	if (py_iter)
-	{
-		while (PyObject *py_item = PyIter_Next(py_iter))
-		{
-			if (!PyNumber_Check(py_item))
-			{
-				Py_DECREF(py_iter);
-				PyErr_SetString(PyExc_TypeError, "value is not an iterable of numbers");
-				return -1;
-			}
-			PyObject *py_num = PyNumber_Long(py_item);
-			uint8 num = PyLong_AsUnsignedLong(py_num);
-			Py_DECREF(py_num);
-			self->ss_vertex.InfluenceWeights[pos] = num;
-			pos++;
-			if (pos >= MAX_TOTAL_INFLUENCES)
-				break;
-		}
-		Py_DECREF(py_iter);
-		return 0;
-	}
-	PyErr_SetString(PyExc_TypeError, "value is not an iterable of numbers");
-	return -1;
+	return py_ue_fsoft_skin_vertex_set_uint16_array(
+		self->ss_vertex.InfluenceWeights,
+		UE_ARRAY_COUNT(self->ss_vertex.InfluenceWeights),
+		value);
 }
 
 
@@ -178,6 +217,7 @@ static int py_ue_fsoft_skin_vertex_set_uvs(ue_PyFSoftSkinVertex *self, PyObject 
 		{
 			if (!PyTuple_Check(py_item))
 			{
+				Py_DECREF(py_item);
 				Py_DECREF(py_iter);
 				PyErr_SetString(PyExc_TypeError, "value is not an iterable of 2-members tuples");
 				return -1;
@@ -185,6 +225,7 @@ static int py_ue_fsoft_skin_vertex_set_uvs(ue_PyFSoftSkinVertex *self, PyObject 
 
 			if (PyTuple_Size(py_item) != 2)
 			{
+				Py_DECREF(py_item);
 				Py_DECREF(py_iter);
 				PyErr_SetString(PyExc_TypeError, "value is not an iterable of 2-members tuples");
 				return -1;
@@ -195,25 +236,40 @@ static int py_ue_fsoft_skin_vertex_set_uvs(ue_PyFSoftSkinVertex *self, PyObject 
 
 			if (!PyNumber_Check(py_x))
 			{
+				Py_DECREF(py_item);
 				Py_DECREF(py_iter);
 				PyErr_SetString(PyExc_TypeError, "tuple item is not a number");
 				return -1;
 			}
 			PyObject *py_num = PyNumber_Float(py_x);
+			if (!py_num)
+			{
+				Py_DECREF(py_item);
+				Py_DECREF(py_iter);
+				return -1;
+			}
 			float x = PyFloat_AsDouble(py_num);
 			Py_DECREF(py_num);
 
 			if (!PyNumber_Check(py_y))
 			{
+				Py_DECREF(py_item);
 				Py_DECREF(py_iter);
 				PyErr_SetString(PyExc_TypeError, "tuple item is not a number");
 				return -1;
 			}
 			py_num = PyNumber_Float(py_y);
+			if (!py_num)
+			{
+				Py_DECREF(py_item);
+				Py_DECREF(py_iter);
+				return -1;
+			}
 			float y = PyFloat_AsDouble(py_num);
 			Py_DECREF(py_num);
 
-			self->ss_vertex.UVs[pos] = FVector2D(x, y);
+			self->ss_vertex.UVs[pos] = FVector2f(x, y);
+			Py_DECREF(py_item);
 			pos++;
 			if (pos >= MAX_TEXCOORDS)
 				break;
@@ -292,8 +348,30 @@ static PyMethodDef ue_PyFSoftSkinVertex_methods[] = {
 
 static PyObject *ue_PyFSoftSkinVertex_str(ue_PyFSoftSkinVertex *self)
 {
-	return PyUnicode_FromFormat("<unreal_engine.FSoftSkinVertex {'position': {'x': %S, 'y': %S, 'z': %S}}>",
-		PyFloat_FromDouble(self->ss_vertex.Position.X), PyFloat_FromDouble(self->ss_vertex.Position.Y), PyFloat_FromDouble(self->ss_vertex.Position.Z));
+	PyObject *py_x = PyFloat_FromDouble(self->ss_vertex.Position.X);
+	PyObject *py_y = PyFloat_FromDouble(self->ss_vertex.Position.Y);
+	PyObject *py_z = PyFloat_FromDouble(self->ss_vertex.Position.Z);
+	if (!py_x || !py_y || !py_z)
+	{
+		Py_XDECREF(py_x);
+		Py_XDECREF(py_y);
+		Py_XDECREF(py_z);
+		return nullptr;
+	}
+
+	PyObject *result = PyUnicode_FromFormat(
+		"<unreal_engine.FSoftSkinVertex {'position': {'x': %S, 'y': %S, 'z': %S}}>",
+		py_x, py_y, py_z);
+	Py_DECREF(py_x);
+	Py_DECREF(py_y);
+	Py_DECREF(py_z);
+	return result;
+}
+
+static void ue_PyFSoftSkinVertex_dealloc(ue_PyFSoftSkinVertex *self)
+{
+	self->ss_vertex.~FSoftSkinVertex();
+	Py_TYPE(self)->tp_free((PyObject *)self);
 }
 
 static PyTypeObject ue_PyFSoftSkinVertexType = {
@@ -301,7 +379,7 @@ static PyTypeObject ue_PyFSoftSkinVertexType = {
 	"unreal_engine.FSoftSkinVertex", /* tp_name */
 	sizeof(ue_PyFSoftSkinVertex), /* tp_basicsize */
 	0,                         /* tp_itemsize */
-	0,       /* tp_dealloc */
+	(destructor)ue_PyFSoftSkinVertex_dealloc,       /* tp_dealloc */
 	0,                         /* tp_print */
 	0,                         /* tp_getattr */
 	0,                         /* tp_setattr */
@@ -336,6 +414,8 @@ static PyTypeObject ue_PyFSoftSkinVertexType = {
 static int py_ue_fsoft_skin_vertex_init(ue_PyFSoftSkinVertex *self, PyObject * args)
 {
 	new(&self->ss_vertex) FSoftSkinVertex();
+	self->material_index = 0;
+	self->smoothing_group = 0;
 	return 0;
 }
 
@@ -361,7 +441,11 @@ ue_PyFSoftSkinVertex *py_ue_is_fsoft_skin_vertex(PyObject *obj)
 PyObject *py_ue_new_fsoft_skin_vertex(FSoftSkinVertex ss_vertex)
 {
 	ue_PyFSoftSkinVertex *ret = (ue_PyFSoftSkinVertex *)PyObject_New(ue_PyFSoftSkinVertex, &ue_PyFSoftSkinVertexType);
+	if (!ret)
+		return nullptr;
 	new(&ret->ss_vertex) FSoftSkinVertex(ss_vertex);
+	ret->material_index = 0;
+	ret->smoothing_group = 0;
 	return (PyObject *)ret;
 }
 

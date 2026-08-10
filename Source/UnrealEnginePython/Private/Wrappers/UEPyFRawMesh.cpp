@@ -2,7 +2,7 @@
 
 #if WITH_EDITOR
 
-#if ENGINE_MINOR_VERSION > 13
+#if UEP_LEGACY_ENGINE_MINOR_VERSION > 13
 
 #include "Engine/StaticMesh.h"
 
@@ -18,7 +18,7 @@ static PyObject *py_ue_fraw_mesh_set_vertex_positions(ue_PyFRawMesh *self, PyObj
 	if (!iter)
 		return PyErr_Format(PyExc_TypeError, "argument is not an iterable");
 
-	TArray<FVector> vertex;
+	TArray<FVector3f> vertex;
 
 	for (;;)
 	{
@@ -28,7 +28,7 @@ static PyObject *py_ue_fraw_mesh_set_vertex_positions(ue_PyFRawMesh *self, PyObj
 
 		if (ue_PyFVector *py_fvector = py_ue_is_fvector(item_x))
 		{
-			vertex.Add(py_fvector->vec);
+			vertex.Add(FVector3f(py_fvector->vec));
 		}
 		else
 		{
@@ -56,7 +56,7 @@ static PyObject *py_ue_fraw_mesh_set_vertex_positions(ue_PyFRawMesh *self, PyObj
 			float z = PyFloat_AsDouble(py_z);
 			Py_DECREF(py_z);
 
-			vertex.Add(FVector(x, y, z));
+			vertex.Add(FVector3f(x, y, z));
 		}
 	}
 
@@ -81,7 +81,7 @@ static PyObject *py_ue_fraw_mesh_set_wedge_tex_coords(ue_PyFRawMesh *self, PyObj
 	if (!iter)
 		return PyErr_Format(PyExc_TypeError, "argument is not an iterable");
 
-	TArray<FVector2D> uv;
+	TArray<FVector2f> uv;
 
 	for (;;)
 	{
@@ -94,7 +94,7 @@ static PyObject *py_ue_fraw_mesh_set_wedge_tex_coords(ue_PyFRawMesh *self, PyObj
 			float x, y;
 			if (!PyArg_ParseTuple(item_x, "ff", &x, &y))
 				return nullptr;
-			uv.Add(FVector2D(x, y));
+			uv.Add(FVector2f(x, y));
 		}
 		else
 		{
@@ -113,7 +113,7 @@ static PyObject *py_ue_fraw_mesh_set_wedge_tex_coords(ue_PyFRawMesh *self, PyObj
 			float y = PyFloat_AsDouble(py_y);
 			Py_DECREF(py_y);
 
-			uv.Add(FVector2D(x, y));
+			uv.Add(FVector2f(x, y));
 		}
 	}
 
@@ -237,7 +237,7 @@ static PyObject *py_ue_fraw_mesh_get_wedge_position(ue_PyFRawMesh *self, PyObjec
 	if (index > self->raw_mesh.WedgeIndices.Num() - 1 || index < 0)
 		return PyErr_Format(PyExc_IndexError, "wedge index error");
 
-	FVector vec = self->raw_mesh.GetWedgePosition(index);
+	FVector vec(self->raw_mesh.GetWedgePosition(index));
 
 	return py_ue_new_fvector(vec);
 }
@@ -254,7 +254,7 @@ static PyObject *py_ue_fraw_mesh_set_wedge_tangent_x(ue_PyFRawMesh *self, PyObje
 	if (!iter)
 		return PyErr_Format(PyExc_TypeError, "argument is not an iterable");
 
-	TArray<FVector> vertex;
+	TArray<FVector3f> vertex;
 
 	for (;;)
 	{
@@ -263,7 +263,7 @@ static PyObject *py_ue_fraw_mesh_set_wedge_tangent_x(ue_PyFRawMesh *self, PyObje
 			break;
 		if (ue_PyFVector *py_fvector = py_ue_is_fvector(item_x))
 		{
-			vertex.Add(py_fvector->vec);
+			vertex.Add(FVector3f(py_fvector->vec));
 		}
 		else
 		{
@@ -291,7 +291,7 @@ static PyObject *py_ue_fraw_mesh_set_wedge_tangent_x(ue_PyFRawMesh *self, PyObje
 			float z = PyFloat_AsDouble(py_z);
 			Py_DECREF(py_z);
 
-			vertex.Add(FVector(x, y, z));
+			vertex.Add(FVector3f(x, y, z));
 		}
 	}
 
@@ -315,7 +315,7 @@ static PyObject *py_ue_fraw_mesh_set_wedge_tangent_y(ue_PyFRawMesh *self, PyObje
 	if (!iter)
 		return PyErr_Format(PyExc_TypeError, "argument is not an iterable");
 
-	TArray<FVector> vertex;
+	TArray<FVector3f> vertex;
 
 	for (;;)
 	{
@@ -324,7 +324,7 @@ static PyObject *py_ue_fraw_mesh_set_wedge_tangent_y(ue_PyFRawMesh *self, PyObje
 			break;
 		if (ue_PyFVector *py_fvector = py_ue_is_fvector(item_x))
 		{
-			vertex.Add(py_fvector->vec);
+			vertex.Add(FVector3f(py_fvector->vec));
 		}
 		else
 		{
@@ -352,7 +352,7 @@ static PyObject *py_ue_fraw_mesh_set_wedge_tangent_y(ue_PyFRawMesh *self, PyObje
 			float z = PyFloat_AsDouble(py_z);
 			Py_DECREF(py_z);
 
-			vertex.Add(FVector(x, y, z));
+			vertex.Add(FVector3f(x, y, z));
 		}
 	}
 
@@ -376,7 +376,7 @@ static PyObject *py_ue_fraw_mesh_set_wedge_tangent_z(ue_PyFRawMesh *self, PyObje
 	if (!iter)
 		return PyErr_Format(PyExc_TypeError, "argument is not an iterable");
 
-	TArray<FVector> vertex;
+	TArray<FVector3f> vertex;
 
 	for (;;)
 	{
@@ -386,7 +386,7 @@ static PyObject *py_ue_fraw_mesh_set_wedge_tangent_z(ue_PyFRawMesh *self, PyObje
 
 		if (ue_PyFVector *py_fvector = py_ue_is_fvector(item_x))
 		{
-			vertex.Add(py_fvector->vec);
+			vertex.Add(FVector3f(py_fvector->vec));
 		}
 		else
 		{
@@ -414,7 +414,7 @@ static PyObject *py_ue_fraw_mesh_set_wedge_tangent_z(ue_PyFRawMesh *self, PyObje
 			float z = PyFloat_AsDouble(py_z);
 			Py_DECREF(py_z);
 
-			vertex.Add(FVector(x, y, z));
+			vertex.Add(FVector3f(x, y, z));
 		}
 	}
 
@@ -504,7 +504,7 @@ static PyObject *py_ue_fraw_mesh_get_vertex_positions(ue_PyFRawMesh *self, PyObj
 
 	for (int32 i = 0; i < self->raw_mesh.VertexPositions.Num(); i++)
 	{
-		PyList_Append(py_list, py_ue_new_fvector(self->raw_mesh.VertexPositions[i]));
+		PyList_Append(py_list, py_ue_new_fvector(FVector(self->raw_mesh.VertexPositions[i])));
 	}
 
 	return py_list;
@@ -517,7 +517,7 @@ static PyObject *py_ue_fraw_mesh_get_wedge_tangent_x(ue_PyFRawMesh *self, PyObje
 
 	for (int32 i = 0; i < self->raw_mesh.WedgeTangentX.Num(); i++)
 	{
-		PyList_Append(py_list, py_ue_new_fvector(self->raw_mesh.WedgeTangentX[i]));
+		PyList_Append(py_list, py_ue_new_fvector(FVector(self->raw_mesh.WedgeTangentX[i])));
 	}
 
 	return py_list;
@@ -530,7 +530,7 @@ static PyObject *py_ue_fraw_mesh_get_wedge_tangent_y(ue_PyFRawMesh *self, PyObje
 
 	for (int32 i = 0; i < self->raw_mesh.WedgeTangentY.Num(); i++)
 	{
-		PyList_Append(py_list, py_ue_new_fvector(self->raw_mesh.WedgeTangentY[i]));
+		PyList_Append(py_list, py_ue_new_fvector(FVector(self->raw_mesh.WedgeTangentY[i])));
 	}
 
 	return py_list;
@@ -543,7 +543,7 @@ static PyObject *py_ue_fraw_mesh_get_wedge_tangent_z(ue_PyFRawMesh *self, PyObje
 
 	for (int32 i = 0; i < self->raw_mesh.WedgeTangentZ.Num(); i++)
 	{
-		PyList_Append(py_list, py_ue_new_fvector(self->raw_mesh.WedgeTangentZ[i]));
+		PyList_Append(py_list, py_ue_new_fvector(FVector(self->raw_mesh.WedgeTangentZ[i])));
 	}
 
 	return py_list;
@@ -644,12 +644,18 @@ static int ue_py_fraw_mesh_init(ue_PyFRawMesh *self, PyObject *args, PyObject *k
 	return 0;
 }
 
+static void ue_py_fraw_mesh_dealloc(ue_PyFRawMesh *self)
+{
+	self->raw_mesh.~FRawMesh();
+	Py_TYPE(self)->tp_free((PyObject *)self);
+}
+
 static PyTypeObject ue_PyFRawMeshType = {
 	PyVarObject_HEAD_INIT(NULL, 0)
 	"unreal_engine.FRawMesh", /* tp_name */
 	sizeof(ue_PyFRawMesh),    /* tp_basicsize */
 	0,                         /* tp_itemsize */
-	0,   /* tp_dealloc */
+	(destructor)ue_py_fraw_mesh_dealloc,   /* tp_dealloc */
 	0,                         /* tp_print */
 	0,                         /* tp_getattr */
 	0,                         /* tp_setattr */
@@ -680,6 +686,8 @@ static PyTypeObject ue_PyFRawMeshType = {
 PyObject *py_ue_new_fraw_mesh(FRawMesh raw_mesh)
 {
 	ue_PyFRawMesh *ret = (ue_PyFRawMesh *)PyObject_New(ue_PyFRawMesh, &ue_PyFRawMeshType);
+	if (!ret)
+		return nullptr;
 
 	new(&ret->raw_mesh) FRawMesh(raw_mesh);
 	return (PyObject *)ret;

@@ -11,12 +11,7 @@ static void ue_pycallable_dealloc(ue_PyCallable *self)
 
 static PyObject* ue_pycallable_call(ue_PyCallable *self, PyObject *args, PyObject *kw)
 {
-	if (!self->u_function ||
-		!self->u_target ||
-		!self->u_function->IsValidLowLevel() ||
-		!self->u_target->IsValidLowLevel() ||
-		self->u_function->IsPendingKillOrUnreachable() ||
-		self->u_target->IsPendingKillOrUnreachable())
+	if (!::IsValid(self->u_function) || !::IsValid(self->u_target))
 	{
 		return PyErr_Format(PyExc_Exception, "UFunction/UObject is in invalid state for python callable");
 	}

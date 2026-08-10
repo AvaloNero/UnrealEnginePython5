@@ -65,7 +65,7 @@ PyObject *py_ue_get_controlled_pawn(ue_PyUObject * self, PyObject * args)
 	if (!controller)
 		return PyErr_Format(PyExc_Exception, "uobject is not an AController");
 
-#if ENGINE_MINOR_VERSION >= 15
+#if UEP_LEGACY_ENGINE_MINOR_VERSION >= 15
 	APawn *pawn = controller->GetPawn();
 #else
 	APawn *pawn = controller->GetControlledPawn();

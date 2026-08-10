@@ -40,7 +40,7 @@ int32 UPyCommandlet::Main(const FString& CommandLine)
 	const FRegexPattern myPattern(RegexString);
 	FRegexMatcher myMatcher(myPattern, *CommandLine);
 	myMatcher.FindNext();
-#if ENGINE_MINOR_VERSION >= 18
+#if UEP_LEGACY_ENGINE_MINOR_VERSION >= 18
 	FString PyCommandLine = myMatcher.GetCaptureGroup(0).TrimStart().TrimEnd();
 #else
 	FString PyCommandLine = myMatcher.GetCaptureGroup(0).Trim().TrimTrailing();
@@ -80,38 +80,36 @@ int32 UPyCommandlet::Main(const FString& CommandLine)
 	}
 	PyArgv.Insert(Filepath, 0);
 
-#if PY_MAJOR_VERSION >= 3
-	wchar_t **argv = (wchar_t **)malloc(PyArgv.Num() * sizeof(void*));
-#else
-	char **argv = (char **)malloc(PyArgv.Num() * sizeof(void*));
-#endif
-
-	for (int i = 0; i < PyArgv.Num(); i++)
+	PyObject *PyArgvList = PyList_New(PyArgv.Num());
+	if (!PyArgvList)
 	{
-#if PY_MAJOR_VERSION >= 3
-		argv[i] = (wchar_t*)malloc(PyArgv[i].Len() + 1);
-#if PLATFORM_MAC || PLATFORM_LINUX
-	#if ENGINE_MINOR_VERSION >= 20
-		wcsncpy(argv[i], (const wchar_t *) TCHAR_TO_WCHAR(*PyArgv[i].ReplaceEscapedCharWithChar()), PyArgv[i].Len() + 1);
-	#else
-		wcsncpy(argv[i], *PyArgv[i].ReplaceEscapedCharWithChar(), PyArgv[i].Len() + 1);
-	#endif
-#elif PLATFORM_ANDROID
-		wcsncpy(argv[i], (const wchar_t *)*PyArgv[i].ReplaceEscapedCharWithChar(), PyArgv[i].Len() + 1);
-#else
-		wcscpy_s(argv[i], PyArgv[i].Len() + 1, *PyArgv[i].ReplaceEscapedCharWithChar());
-#endif
-#else
-		argv[i] = (char*)malloc(PyArgv[i].Len() + 1);
-#if PLATFORM_MAC || PLATFORM_LINUX || PLATFORM_ANDROID
-		strncpy(argv[i], TCHAR_TO_UTF8(*PyArgv[i].ReplaceEscapedCharWithChar()), PyArgv[i].Len() + 1);
-#else
-		strcpy_s(argv[i], PyArgv[i].Len() + 1, TCHAR_TO_UTF8(*PyArgv[i].ReplaceEscapedCharWithChar()));
-#endif
-#endif
+		unreal_engine_py_log_error();
+		return -1;
 	}
 
-	PySys_SetArgv(PyArgv.Num(), argv);
+	for (int32 Index = 0; Index < PyArgv.Num(); ++Index)
+	{
+		// Command-line arguments are already tokenized above. Unescaping them here
+		// corrupts ordinary Windows paths (for example, "\\Results" becomes a
+		// carriage return followed by "esults"). Preserve argv exactly as passed.
+		const FString& Argument = PyArgv[Index];
+		PyObject *PyArgument = PyUnicode_FromString(TCHAR_TO_UTF8(*Argument));
+		if (!PyArgument)
+		{
+			Py_DECREF(PyArgvList);
+			unreal_engine_py_log_error();
+			return -1;
+		}
+		PyList_SET_ITEM(PyArgvList, Index, PyArgument);
+	}
+
+	if (PySys_SetObject("argv", PyArgvList) != 0)
+	{
+		Py_DECREF(PyArgvList);
+		unreal_engine_py_log_error();
+		return -1;
+	}
+	Py_DECREF(PyArgvList);
 
 	Py_BEGIN_ALLOW_THREADS;
 

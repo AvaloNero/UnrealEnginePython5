@@ -5,7 +5,10 @@
 #include "PythonBlueprintFunctionLibrary.h"
 #include "HAL/IConsoleManager.h"
 #include "HAL/PlatformFilemanager.h"
-#if ENGINE_MINOR_VERSION < 13
+#include "HAL/PlatformProcess.h"
+#include "Misc/CoreDelegates.h"
+#include "CoreGlobals.h"
+#if UEP_LEGACY_ENGINE_MINOR_VERSION < 13
 #include "ClassIconFinder.h"
 #endif
 
@@ -14,7 +17,7 @@
 #include "Interfaces/IPluginManager.h"
 #endif
 
-#if ENGINE_MINOR_VERSION >= 18
+#if UEP_LEGACY_ENGINE_MINOR_VERSION >= 18
 #define PROJECT_CONTENT_DIR FPaths::ProjectContentDir()
 #else
 #define PROJECT_CONTENT_DIR FPaths::GameContentDir()
@@ -26,6 +29,12 @@
 
 void unreal_engine_init_py_module();
 void init_unreal_engine_builtin();
+void unreal_engine_python_shutdown_housekeeper();
+
+namespace
+{
+	FDelegateHandle GUEPEnginePreExitHandle;
+}
 
 #if PLATFORM_LINUX
 const char *ue4_module_options = "linux_global_symbols";
@@ -96,11 +105,8 @@ bool PyUnicodeOrString_Check(PyObject *py_obj)
 
 void FUnrealEnginePythonModule::UESetupPythonInterpreter(bool verbose)
 {
-	const TCHAR* CommandLine = FCommandLine::GetOriginal();
-	const SIZE_T CommandLineSize = FCString::Strlen(CommandLine) + 1;
-	TCHAR* CommandLineCopy = new TCHAR[CommandLineSize];
-	FCString::Strcpy(CommandLineCopy, CommandLineSize, CommandLine);
-	const TCHAR* ParsedCmdLine = CommandLineCopy;
+	const FString CommandLineCopy(FCommandLine::GetOriginal());
+	const TCHAR* ParsedCmdLine = *CommandLineCopy;
 
 	TArray<FString> Args;
 	for (;;)
@@ -111,27 +117,30 @@ void FUnrealEnginePythonModule::UESetupPythonInterpreter(bool verbose)
 		Args.Add(Arg);
 	}
 
-#if PY_MAJOR_VERSION >= 3
-	wchar_t **argv = (wchar_t **)FMemory::Malloc(sizeof(wchar_t *) * (Args.Num() + 1));
-#else
-	char **argv = (char **)FMemory::Malloc(sizeof(char *) * (Args.Num() + 1));
-#endif
-	argv[Args.Num()] = nullptr;
-
-	for (int32 i = 0; i < Args.Num(); i++)
+	PyObject* PyArgv = PyList_New(Args.Num());
+	if (!PyArgv)
 	{
-#if PY_MAJOR_VERSION >= 3
-	#if ENGINE_MINOR_VERSION >= 20
-		argv[i] = (wchar_t *)(TCHAR_TO_WCHAR(*Args[i]));
-	#else
-		argv[i] = (wchar_t *)(*Args[i]);
-	#endif
-#else
-		argv[i] = TCHAR_TO_UTF8(*Args[i]);
-#endif
+		unreal_engine_py_log_error();
+		return;
 	}
-
-	PySys_SetArgv(Args.Num(), argv);
+	for (int32 Index = 0; Index < Args.Num(); ++Index)
+	{
+		PyObject* PyArg = PyUnicode_FromString(TCHAR_TO_UTF8(*Args[Index]));
+		if (!PyArg)
+		{
+			Py_DECREF(PyArgv);
+			unreal_engine_py_log_error();
+			return;
+		}
+		PyList_SET_ITEM(PyArgv, Index, PyArg); // Steals the reference.
+	}
+	if (PySys_SetObject("argv", PyArgv) != 0)
+	{
+		Py_DECREF(PyArgv);
+		unreal_engine_py_log_error();
+		return;
+	}
+	Py_DECREF(PyArgv);
 
 	unreal_engine_init_py_module();
 
@@ -143,6 +152,7 @@ void FUnrealEnginePythonModule::UESetupPythonInterpreter(bool verbose)
 	char *zip_path = TCHAR_TO_UTF8(*ZipPath);
 	PyObject *py_zip_path = PyUnicode_FromString(zip_path);
 	PyList_Insert(py_path, 0, py_zip_path);
+	Py_DECREF(py_zip_path);
 
 
 	int i = 0;
@@ -151,15 +161,20 @@ void FUnrealEnginePythonModule::UESetupPythonInterpreter(bool verbose)
 		char *scripts_path = TCHAR_TO_UTF8(*ScriptsPath);
 		PyObject *py_scripts_path = PyUnicode_FromString(scripts_path);
 		PyList_Insert(py_path, i++, py_scripts_path);
+		Py_DECREF(py_scripts_path);
 		if (verbose)
 		{
 			UE_LOG(LogPython, Log, TEXT("Python Scripts search path: %s"), UTF8_TO_TCHAR(scripts_path));
 		}
 	}
 
-	char *additional_modules_path = TCHAR_TO_UTF8(*AdditionalModulesPath);
-	PyObject *py_additional_modules_path = PyUnicode_FromString(additional_modules_path);
-	PyList_Insert(py_path, 0, py_additional_modules_path);
+	if (!AdditionalModulesPath.IsEmpty())
+	{
+		char *additional_modules_path = TCHAR_TO_UTF8(*AdditionalModulesPath);
+		PyObject *py_additional_modules_path = PyUnicode_FromString(additional_modules_path);
+		PyList_Insert(py_path, 0, py_additional_modules_path);
+		Py_DECREF(py_additional_modules_path);
+	}
 
 	if (verbose)
 	{
@@ -243,58 +258,63 @@ FAutoConsoleCommand ExecPythonStringCommand(
 void FUnrealEnginePythonModule::StartupModule()
 {
 	BrutalFinalize = false;
+	OwnsPythonInterpreter = false;
+	PythonMainThreadState = nullptr;
+	bPythonInitialized = false;
 
-	// This code will execute after your module is loaded into memory; the exact timing is specified in the .uplugin file per-module
-	FString PythonHome;
-	if (GConfig->GetString(UTF8_TO_TCHAR("Python"), UTF8_TO_TCHAR("Home"), PythonHome, GEngineIni))
+	// PythonScriptPlugin initializes the engine's Python3 runtime during
+	// OnPostEngineInit. Initialize UEP only after every startup loading phase has
+	// completed so the built-in plugin can own the shared VM when it is enabled.
+	if (IsEngineStartupModuleLoadingComplete())
 	{
-#if PY_MAJOR_VERSION >= 3
-		wchar_t *home = (wchar_t *)*PythonHome;
-#else
-		char *home = TCHAR_TO_UTF8(*PythonHome);
-#endif
-		FPlatformMisc::SetEnvironmentVar(TEXT("PYTHONHOME"), *PythonHome);
-		Py_SetPythonHome(home);
+		InitializePython();
+	}
+	else
+	{
+		AllModuleLoadingPhasesCompleteHandle = FCoreDelegates::OnAllModuleLoadingPhasesComplete.AddRaw(this, &FUnrealEnginePythonModule::InitializePython);
+	}
+}
+
+void FUnrealEnginePythonModule::InitializePython()
+{
+	if (bPythonInitialized)
+	{
+		return;
 	}
 
-	if (GConfig->GetString(UTF8_TO_TCHAR("Python"), UTF8_TO_TCHAR("RelativeHome"), PythonHome, GEngineIni))
+	// Resolve interpreter and script configuration after engine startup modules are ready.
+	FString PythonHome = UTF8_TO_TCHAR(UE_PYTHON_DIR);
+	PythonHome.ReplaceInline(TEXT("{ENGINE_DIR}"), *FPaths::EngineDir(), ESearchCase::CaseSensitive);
+	FPaths::NormalizeDirectoryName(PythonHome);
+	FPaths::RemoveDuplicateSlashes(PythonHome);
+
+	FString ConfiguredPythonHome;
+	if (GConfig->GetString(TEXT("Python"), TEXT("Home"), ConfiguredPythonHome, GEngineIni))
 	{
-		PythonHome = FPaths::Combine(*PROJECT_CONTENT_DIR, *PythonHome);
+		PythonHome = ConfiguredPythonHome;
+	}
+
+	if (GConfig->GetString(TEXT("Python"), TEXT("RelativeHome"), ConfiguredPythonHome, GEngineIni))
+	{
+		PythonHome = FPaths::Combine(*PROJECT_CONTENT_DIR, *ConfiguredPythonHome);
 		FPaths::NormalizeFilename(PythonHome);
 		PythonHome = FPaths::ConvertRelativePathToFull(PythonHome);
-#if PY_MAJOR_VERSION >= 3
-		wchar_t *home = (wchar_t *)*PythonHome;
-#else
-		char *home = TCHAR_TO_UTF8(*PythonHome);
-#endif
-
-		Py_SetPythonHome(home);
 	}
 
 	TArray<FString> ImportModules;
 
 	FString IniValue;
-	if (GConfig->GetString(UTF8_TO_TCHAR("Python"), UTF8_TO_TCHAR("ProgramName"), IniValue, GEngineIni))
+	FString PythonProgramName = FPlatformProcess::ExecutablePath();
+	if (GConfig->GetString(TEXT("Python"), TEXT("ProgramName"), IniValue, GEngineIni))
 	{
-#if PY_MAJOR_VERSION >= 3
-		wchar_t *program_name = (wchar_t *)*IniValue;
-#else
-		char *program_name = TCHAR_TO_UTF8(*IniValue);
-#endif
-		Py_SetProgramName(program_name);
+		PythonProgramName = IniValue;
 	}
 
-	if (GConfig->GetString(UTF8_TO_TCHAR("Python"), UTF8_TO_TCHAR("RelativeProgramName"), IniValue, GEngineIni))
+	if (GConfig->GetString(TEXT("Python"), TEXT("RelativeProgramName"), IniValue, GEngineIni))
 	{
-		IniValue = FPaths::Combine(*PROJECT_CONTENT_DIR, *IniValue);
-		FPaths::NormalizeFilename(IniValue);
-		IniValue = FPaths::ConvertRelativePathToFull(IniValue);
-#if PY_MAJOR_VERSION >= 3
-		wchar_t *program_name = (wchar_t *)*IniValue;
-#else
-		char *program_name = TCHAR_TO_UTF8(*IniValue);
-#endif
-		Py_SetProgramName(program_name);
+		PythonProgramName = FPaths::Combine(*PROJECT_CONTENT_DIR, *IniValue);
+		FPaths::NormalizeFilename(PythonProgramName);
+		PythonProgramName = FPaths::ConvertRelativePathToFull(PythonProgramName);
 	}
 
 	if (GConfig->GetString(UTF8_TO_TCHAR("Python"), UTF8_TO_TCHAR("ScriptsPath"), IniValue, GEngineIni))
@@ -365,13 +385,13 @@ void FUnrealEnginePythonModule::StartupModule()
 	// To ensure there are no path conflicts, if we have a valid python home at this point,
 	// we override the current environment entirely with the environment we want to use,
 	// removing any paths to other python environments we aren't using.
-	if (PythonHome.Len() > 0)
+	if (PythonHome.Len() > 0 && !Py_IsInitialized())
 	{
 		FPlatformMisc::SetEnvironmentVar(TEXT("PYTHONHOME"), *PythonHome);
 
 		const int32 MaxPathVarLen = 32768;
 		FString OrigPathVar = FString::ChrN(MaxPathVarLen, TEXT('\0'));
-#if ENGINE_MINOR_VERSION >= 21
+#if UEP_LEGACY_ENGINE_MINOR_VERSION >= 21
 		OrigPathVar = FPlatformMisc::GetEnvironmentVariable(TEXT("PATH"));
 #else
 		FPlatformMisc::GetEnvironmentVariable(TEXT("PATH"), OrigPathVar.GetCharArray().GetData(), MaxPathVarLen);
@@ -404,69 +424,82 @@ void FUnrealEnginePythonModule::StartupModule()
 		FString ModifiedPath = FString::Join(PathVars, PathDelimiter);
 		FPlatformMisc::SetEnvironmentVar(TEXT("PATH"), *ModifiedPath);
 	}
-
-
-
-#if PY_MAJOR_VERSION >= 3
-	init_unreal_engine_builtin();
-#if PLATFORM_ANDROID
-	extern FString GOBBFilePathBase;
-	extern FString GFilePathBase;
-	extern FString GExternalFilePath;
-	extern FString GPackageName;
-	extern int32 GAndroidPackageVersion;
-	FString OBBDir1 = GOBBFilePathBase + FString(TEXT("/Android/obb/") + GPackageName);
-	FString OBBDir2 = GOBBFilePathBase + FString(TEXT("/obb/") + GPackageName);
-	FString MainOBBName = FString::Printf(TEXT("main.%d.%s.obb"), GAndroidPackageVersion, *GPackageName);
-	FString PatchOBBName = FString::Printf(TEXT("patch.%d.%s.obb"), GAndroidPackageVersion, *GPackageName);
-	FString UnrealEnginePython_OBBPath;
-	if (FPaths::FileExists(*(OBBDir1 / MainOBBName)))
+	PyGILState_STATE AttachedGILState = PyGILState_UNLOCKED;
+	if (!Py_IsInitialized())
 	{
-		UnrealEnginePython_OBBPath = OBBDir1 / MainOBBName / FApp::GetProjectName() / FString(TEXT("Content/Scripts"));
+		init_unreal_engine_builtin();
+
+		PyPreConfig PreConfig;
+		PyPreConfig_InitIsolatedConfig(&PreConfig);
+		PreConfig.parse_argv = 0;
+		PreConfig.utf8_mode = 1;
+		PreConfig.isolated = 1;
+		PreConfig.use_environment = 0;
+
+		PyStatus Status = Py_PreInitialize(&PreConfig);
+		if (PyStatus_Exception(Status))
+		{
+			UE_LOG(LogPython, Error, TEXT("Py_PreInitialize failed: %s"), UTF8_TO_TCHAR(Status.err_msg ? Status.err_msg : "unknown error"));
+			return;
+		}
+
+		PyConfig Config;
+		PyConfig_InitIsolatedConfig(&Config);
+		Config.parse_argv = 0;
+		Config.isolated = 1;
+		Config.use_environment = 0;
+		Config.install_signal_handlers = 0;
+		Config.safe_path = 0;
+		Config.user_site_directory = 0;
+
+		auto SetConfigString = [&Config](wchar_t** Field, const FString& Value, const TCHAR* FieldName) -> bool
+		{
+			const PyStatus SetStatus = PyConfig_SetBytesString(&Config, Field, TCHAR_TO_UTF8(*Value));
+			if (PyStatus_Exception(SetStatus))
+			{
+				UE_LOG(LogPython, Error, TEXT("Unable to configure Python %s: %s"), FieldName, UTF8_TO_TCHAR(SetStatus.err_msg ? SetStatus.err_msg : "unknown error"));
+				return false;
+			}
+			return true;
+		};
+
+		if (!SetConfigString(&Config.program_name, PythonProgramName, TEXT("program name")) ||
+			!SetConfigString(&Config.home, PythonHome, TEXT("home")) ||
+			!SetConfigString(&Config.stdio_encoding, TEXT("utf-8"), TEXT("stdio encoding")))
+		{
+			PyConfig_Clear(&Config);
+			return;
+		}
+
+		Status = Py_InitializeFromConfig(&Config);
+		PyConfig_Clear(&Config);
+		if (PyStatus_Exception(Status))
+		{
+			UE_LOG(LogPython, Error, TEXT("Py_InitializeFromConfig failed: %s"), UTF8_TO_TCHAR(Status.err_msg ? Status.err_msg : "unknown error"));
+			return;
+		}
+
+		OwnsPythonInterpreter = true;
+		UE_LOG(LogPython, Log, TEXT("Initialized engine CPython at %s"), *PythonHome);
 	}
-	else if (FPaths::FileExists(*(OBBDir2 / MainOBBName)))
+	else
 	{
-		UnrealEnginePython_OBBPath = OBBDir2 / MainOBBName / FApp::GetProjectName() / FString(TEXT("Content/Scripts"));
+		// The editor's PythonScriptPlugin may have initialized the shared process VM
+		// during PreDefault. Add UEP to that interpreter without taking ownership.
+		AttachedGILState = PyGILState_Ensure();
+		UE_LOG(LogPython, Log, TEXT("Attaching UnrealEnginePython to the existing CPython interpreter"));
 	}
-	if (FPaths::FileExists(*(OBBDir1 / PatchOBBName)))
-	{
-		UnrealEnginePython_OBBPath = OBBDir1 / PatchOBBName / FApp::GetProjectName() / FString(TEXT("Content/Scripts"));
-	}
-	else if (FPaths::FileExists(*(OBBDir2 / PatchOBBName)))
-	{
-		UnrealEnginePython_OBBPath = OBBDir1 / PatchOBBName / FApp::GetProjectName() / FString(TEXT("Content/Scripts"));
-	}
-
-	if (!UnrealEnginePython_OBBPath.IsEmpty())
-	{
-		ScriptsPaths.Add(UnrealEnginePython_OBBPath);
-	}
-
-	FString FinalPath = GFilePathBase / FString("UE4Game") / FApp::GetProjectName() / FApp::GetProjectName() / FString(TEXT("Content/Scripts"));
-	ScriptsPaths.Add(FinalPath);
-
-	FString BasePythonPath = FinalPath / FString(TEXT("stdlib.zip")) + FString(":") + FinalPath;
-
-	if (!UnrealEnginePython_OBBPath.IsEmpty())
-	{
-		BasePythonPath += FString(":") + UnrealEnginePython_OBBPath;
-	}
-
-	UE_LOG(LogPython, Warning, TEXT("Setting Base Path to %s"), *BasePythonPath);
-
-	Py_SetPath(Py_DecodeLocale(TCHAR_TO_UTF8(*BasePythonPath), NULL));
-#endif
-#endif
-
-	Py_Initialize();
 
 #if PLATFORM_WINDOWS
 	// Restore stdio state after Py_Initialize set it to O_BINARY, otherwise
 	// everything that the engine will output is going to be encoded in UTF-16.
 	// The behaviour is described here: https://bugs.python.org/issue16587
-	_setmode(_fileno(stdin), O_TEXT);
-	_setmode(_fileno(stdout), O_TEXT);
-	_setmode(_fileno(stderr), O_TEXT);
+	if (OwnsPythonInterpreter)
+	{
+		_setmode(_fileno(stdin), O_TEXT);
+		_setmode(_fileno(stdout), O_TEXT);
+		_setmode(_fileno(stderr), O_TEXT);
+	}
 
 	// Also restore the user-requested UTF-8 flag if relevant (behaviour copied
 	// from LaunchEngineLoop.cpp).
@@ -476,14 +509,12 @@ void FUnrealEnginePythonModule::StartupModule()
 	}
 #endif
 
-	PyEval_InitThreads();
-
 #if WITH_EDITOR
 	StyleSet = MakeShareable(new FSlateStyleSet("UnrealEnginePython"));
 	StyleSet->SetContentRoot(IPluginManager::Get().FindPlugin("UnrealEnginePython")->GetBaseDir() / "Resources");
 	StyleSet->Set("ClassThumbnail.PythonScript", new FSlateImageBrush(StyleSet->RootToContentDir("Icon128.png"), FVector2D(128.0f, 128.0f)));
 	FSlateStyleRegistry::RegisterSlateStyle(*StyleSet.Get());
-#if ENGINE_MINOR_VERSION < 13
+#if UEP_LEGACY_ENGINE_MINOR_VERSION < 13
 	FClassIconFinder::RegisterIconSource(StyleSet.Get());
 #endif
 #endif
@@ -530,21 +561,52 @@ void FUnrealEnginePythonModule::StartupModule()
 		}
 	}
 
-	// release the GIL
-	PyThreadState *UEPyGlobalState = PyEval_SaveThread();
+	if (OwnsPythonInterpreter)
+	{
+		// Py_InitializeFromConfig leaves the GIL held by this thread.
+		PythonMainThreadState = PyEval_SaveThread();
+	}
+	else
+	{
+		PyGILState_Release(AttachedGILState);
+	}
+
+	bPythonInitialized = true;
+	if (!GUEPEnginePreExitHandle.IsValid())
+	{
+		GUEPEnginePreExitHandle = FCoreDelegates::OnEnginePreExit.AddStatic(&unreal_engine_python_shutdown_housekeeper);
+	}
 }
 
 void FUnrealEnginePythonModule::ShutdownModule()
 {
+	if (GUEPEnginePreExitHandle.IsValid())
+	{
+		FCoreDelegates::OnEnginePreExit.Remove(GUEPEnginePreExitHandle);
+		GUEPEnginePreExitHandle.Reset();
+	}
+	unreal_engine_python_shutdown_housekeeper();
+
+	if (AllModuleLoadingPhasesCompleteHandle.IsValid())
+	{
+		FCoreDelegates::OnAllModuleLoadingPhasesComplete.Remove(AllModuleLoadingPhasesCompleteHandle);
+		AllModuleLoadingPhasesCompleteHandle.Reset();
+	}
+
 	// This function may be called during shutdown to clean up your module.  For modules that support dynamic reloading,
 	// we call this function before unloading the module.
 
 	UE_LOG(LogPython, Log, TEXT("Goodbye Python"));
-	if (!BrutalFinalize)
+	if (OwnsPythonInterpreter && !BrutalFinalize && Py_IsInitialized())
 	{
-		PyGILState_Ensure();
+		if (PythonMainThreadState)
+		{
+			PyEval_RestoreThread(PythonMainThreadState);
+			PythonMainThreadState = nullptr;
+		}
 		Py_Finalize();
 	}
+	bPythonInitialized = false;
 }
 
 void FUnrealEnginePythonModule::RunString(char *str)

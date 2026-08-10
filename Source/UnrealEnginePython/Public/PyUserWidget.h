@@ -5,7 +5,7 @@
 #include "Runtime/Launch/Resources/Version.h"
 #include "PyUserWidget.generated.h"
 
-#if ENGINE_MINOR_VERSION < 20
+#if UEP_LEGACY_ENGINE_MINOR_VERSION < 20
 #define NativePaintArgs FPaintContext & InContext
 #define NativePaintRetValue void
 #else

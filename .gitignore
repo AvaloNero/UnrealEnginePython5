@@ -90,6 +90,8 @@ ENV/
 
 Binaries/
 Intermediate/
+.build/
+.codegraph/
 python35/
 python27/
 *.un~

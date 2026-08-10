@@ -1,7 +1,7 @@
 #pragma once
 
 #include "UEPyModule.h"
-#include "UnrealClient.h"
+#include "ViewportClient.h"
 
 extern PyTypeObject ue_PyFViewportClientType;
 

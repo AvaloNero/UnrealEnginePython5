@@ -61,6 +61,8 @@ static PyObject *py_ue_spython_list_view_set_header_row(ue_PySPythonListView *se
 
 static PyObject *py_spython_list_view_update_item_source_list(ue_PySPythonListView *self, PyObject * args)
 {
+	ue_py_slate_cast(SPythonListView);
+
 	PyObject *values;
 	if (!PyArg_ParseTuple(args, "O:update_item_source_list", &values))
 	{
@@ -79,17 +81,16 @@ static PyObject *py_spython_list_view_update_item_source_list(ue_PySPythonListVi
 	TArray<TSharedPtr<FPythonItem>> tempNewArray;
 	while (PyObject *item = PyIter_Next(values))
 	{
-		Py_INCREF(item);
 		tempNewArray.Add(TSharedPtr<FPythonItem>(new FPythonItem(item)));
 	}
-
-	for (TSharedPtr<struct FPythonItem>& item : self->item_source_list)
+	Py_DECREF(values);
+	if (PyErr_Occurred())
 	{
-		Py_XDECREF(item->py_object);
+		return nullptr;
 	}
-	self->item_source_list.Empty();
 
-	Move<TArray<TSharedPtr<FPythonItem>>>(self->item_source_list, tempNewArray);
+	py_SPythonListView->GetMutablePythonItemsSource() = MoveTemp(tempNewArray);
+	py_SPythonListView->RequestListRefresh();
 	Py_RETURN_NONE;
 }
 
@@ -102,27 +103,12 @@ static PyMethodDef ue_PySPythonListView_methods[] = {
 	{ NULL }  /* Sentinel */
 };
 
-static void ue_PySPythonListView_dealloc(ue_PySPythonListView *self)
-{
-#if defined(UEPY_MEMORY_DEBUG)
-	UE_LOG(LogPython, Warning, TEXT("Destroying ue_PySPythonListView %p"), self);
-#endif
-
-	for (TSharedPtr<struct FPythonItem>& item : self->item_source_list)
-	{
-		Py_XDECREF(item->py_object);
-	}
-	self->item_source_list.Empty();
-
-	Py_TYPE(self)->tp_free((PyObject *)self);
-}
-
 PyTypeObject ue_PySPythonListViewType = {
 	PyVarObject_HEAD_INIT(NULL, 0)
 	"unreal_engine.SPythonListView", /* tp_name */
 	sizeof(ue_PySPythonListView), /* tp_basicsize */
 	0,                         /* tp_itemsize */
-	(destructor)ue_PySPythonListView_dealloc,       /* tp_dealloc */
+	0,                         /* tp_dealloc */
 	0,                         /* tp_print */
 	0,                         /* tp_getattr */
 	0,                         /* tp_setattr */
@@ -164,17 +150,20 @@ static int ue_py_spython_list_view_init(ue_PySPythonListView *self, PyObject *ar
 	values = PyObject_GetIter(values);
 	if (!values)
 	{
-		Py_DECREF(values);
 		return -1;
 	}
 
-	new(&self->item_source_list) TArray<TSharedPtr<FPythonItem>>();
+	TUniquePtr<TArray<TSharedPtr<FPythonItem>>> items = MakeUnique<TArray<TSharedPtr<FPythonItem>>>();
 	while (PyObject *item = PyIter_Next(values))
 	{
-		Py_INCREF(item);
-		self->item_source_list.Add(TSharedPtr<FPythonItem>(new FPythonItem(item)));
+		items->Add(TSharedPtr<FPythonItem>(new FPythonItem(item)));
 	}
-	arguments.ListItemsSource(&self->item_source_list);
+	Py_DECREF(values);
+	if (PyErr_Occurred())
+	{
+		return -1;
+	}
+	arguments.ListItemsSource(items.Get());
 
 	{
 		PyObject *value = ue_py_dict_get_item(kwargs, "header_row");
@@ -195,18 +184,22 @@ static int ue_py_spython_list_view_init(ue_PySPythonListView *self, PyObject *ar
 	ue_py_slate_farguments_optional_enum("allow_overscroll", AllowOverscroll, EAllowOverscroll);
 	ue_py_slate_farguments_optional_bool("clear_selection_on_click", ClearSelectionOnClick);
 	ue_py_slate_farguments_optional_enum("consume_mouse_wheel", ConsumeMouseWheel, EConsumeMouseWheel);
-#if ENGINE_MINOR_VERSION > 12
+#if UEP_LEGACY_ENGINE_MINOR_VERSION > 12
 	ue_py_slate_farguments_optional_bool("handle_gamepad_events", HandleGamepadEvents);
 #endif
+#if UEP_LEGACY_ENGINE_MINOR_VERSION < 58
 	ue_py_slate_farguments_float("item_height", ItemHeight);
+#endif
 	ue_py_slate_farguments_event("on_generate_row", OnGenerateRow, TSlateDelegates<TSharedPtr<FPythonItem>>::FOnGenerateRow, GenerateRow);
 	ue_py_slate_farguments_event("on_selection_changed", OnSelectionChanged, TSlateDelegates<TSharedPtr<FPythonItem>>::FOnSelectionChanged, OnSelectionChanged);
 	ue_py_slate_farguments_enum("selection_mode", SelectionMode, ESelectionMode::Type);
-#if ENGINE_MINOR_VERSION > 12
+#if UEP_LEGACY_ENGINE_MINOR_VERSION > 12
 	ue_py_slate_farguments_optional_float("wheel_scroll_multiplier", WheelScrollMultiplier);
 #endif
 
 	ue_py_snew(SPythonListView);
+	ue_py_slate_cast(SPythonListView);
+	py_SPythonListView->SetPythonItemsSource(items.Release());
 	return 0;
 }
 

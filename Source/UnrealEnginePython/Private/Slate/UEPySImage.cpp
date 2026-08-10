@@ -48,7 +48,7 @@ static PyObject *py_ue_simage_set_texture(ue_PySImage *self, PyObject * args)
 		tint = py_color->color;
 	}
 
-#if ENGINE_MINOR_VERSION > 15
+#if UEP_LEGACY_ENGINE_MINOR_VERSION > 15
 	self->brush = FSlateImageBrush(texture, FVector2D(texture->GetSurfaceWidth(), texture->GetSurfaceHeight()), tint);
 #else
 	self->brush = FSlateBrush();

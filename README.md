@@ -1,5 +1,51 @@
 
 # UnrealEnginePython
+
+## Unreal Engine 5.8 port
+
+**Current version: 0.1.0**
+
+Version 0.1.0 establishes the first tested UE5 baseline for this fork. It
+targets **Unreal Engine 5.8**, uses the engine-bundled **CPython 3.11** through
+UnrealBuildTool's `Python3` module, and does not require changes to Unreal Engine
+source code. Windows/Win64 is the currently validated platform.
+
+### 0.1.0 support contract
+
+The release baseline includes:
+
+* `UnrealGame` and `UnrealEditor` compilation against UE 5.8;
+* all four plugin modules linking (`UnrealEnginePython`, `PythonAutomation`,
+  `PythonConsole`, and `PythonEditor`);
+* core `unreal_engine` reflection, property, function, delegate, object lifetime,
+  Actor, asset and Slate coverage on Python 3.11;
+* sharing the process interpreter when Epic's `PythonScriptPlugin` owns it, or
+  initializing the engine interpreter when that plugin is disabled;
+* a packaged Win64 runtime test with UEP-owned Python; and
+* a visible Third Person sample whose additional gameplay is driven by Python.
+
+The repeatable acceptance project and one-command build/test/package workflow
+are documented in [`Validation/README.md`](Validation/README.md). The sample is
+documented in [`Demos/README.md`](Demos/README.md). See
+[`CHANGELOG.md`](CHANGELOG.md) for the release contents and
+[`ROADMAP.md`](ROADMAP.md) for the planned Python-first Third Person and later
+Lyra milestones.
+
+### Known 0.1.0 boundaries
+
+Dynamic Python-generated `UClass`/`UFunction` synthesis is temporarily disabled
+while that subsystem is rebuilt on UE5's `FField` reflection model. Generic
+`TSet` property marshalling is also not implemented. The Third Person demo adds
+Python gameplay to the unchanged Blueprint template; migrating the template's
+character, input and animation control logic is a 0.2.0 goal.
+
+To use this source release, place the plugin under a UE 5.8 project's `Plugins`
+directory, regenerate project files, and build it with that UE 5.8 installation.
+The remainder of this README is preserved upstream documentation and may describe
+legacy UE4 or external-Python behavior outside the 0.1.0 support contract above.
+
+## Original upstream documentation
+
 Embed Python in Unreal Engine 4
 
 Teaser (by Kite & Lightning): https://twitter.com/KNLstudio/status/932657812466843648

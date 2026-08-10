@@ -5,13 +5,16 @@
 #include "UEPyModule.h"
 #include "Runtime/Core/Public/Containers/Ticker.h"
 
+using ue_FTickerDelegateHandle = FTSTicker::FDelegateHandle;
+using ue_FPythonSmartDelegatePtr = TSharedPtr<FPythonSmartDelegate>;
+
 typedef struct
 {
 	PyObject_HEAD
 		/* Type-specific fields go here. */
-		FDelegateHandle dhandle;
+	ue_FTickerDelegateHandle dhandle;
 	bool garbaged;
-	TSharedPtr<FPythonSmartDelegate> delegate_ptr;
+	ue_FPythonSmartDelegatePtr delegate_ptr;
 } ue_PyFDelegateHandle;
 
 PyObject *py_unreal_engine_add_ticker(PyObject *, PyObject *);

@@ -5,6 +5,7 @@
 
 #include "Components/DirectionalLightComponent.h"
 #include "Wrappers/UEPyFEditorViewportClient.h"
+#include "UnrealWidget.h"
 
 static PyObject *py_ue_spython_editor_viewport_get_world(ue_PySPythonEditorViewport *self, PyObject * args)
 {
@@ -295,7 +296,7 @@ public:
 
 			SelectedActor = h_actor->Actor;
 
-			SetWidgetMode(FWidget::WM_Translate);
+			SetWidgetMode(UE::Widget::WM_Translate);
 		}
 		else if (HitProxy->IsA(HWidgetAxis::StaticGetType()))
 		{
@@ -308,10 +309,10 @@ public:
 		}
 	}
 
-	virtual FWidget::EWidgetMode GetWidgetMode() const
+	virtual UE::Widget::EWidgetMode GetWidgetMode() const
 	{
 		if (SelectedActor == nullptr)
-			return FWidget::WM_None;
+			return UE::Widget::WM_None;
 		return FEditorViewportClient::GetWidgetMode();
 	}
 
@@ -379,7 +380,7 @@ TSharedRef<FEditorViewportClient> SPythonEditorViewport::MakeEditorViewportClien
 
 	FExposureSettings settings;
 	settings.bFixed = true;
-#if ENGINE_MINOR_VERSION > 18
+#if UEP_LEGACY_ENGINE_MINOR_VERSION > 18
 	settings.FixedEV100 = 0;
 #else
 	settings.LogOffset = 0;
@@ -401,7 +402,7 @@ TSharedRef<SEditorViewport> SPythonEditorViewport::GetViewportWidget()
 	return SharedThis(this);
 }
 
-TSharedPtr<SWidget> SPythonEditorViewport::MakeViewportToolbar()
+TSharedPtr<SWidget> SPythonEditorViewport::BuildViewportToolbar()
 {
 	return SNew(SCommonEditorViewportToolbarBase, SharedThis(this));
 }

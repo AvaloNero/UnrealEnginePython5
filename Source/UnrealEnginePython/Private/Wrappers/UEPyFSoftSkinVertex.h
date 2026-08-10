@@ -5,7 +5,7 @@
 
 #include "Runtime/Engine/Public/SkeletalMeshTypes.h"
 
-#if ENGINE_MINOR_VERSION > 18
+#if UEP_LEGACY_ENGINE_MINOR_VERSION > 18
 
 #include "Runtime/Engine/Public/Rendering/SkeletalMeshLODModel.h"
 

@@ -2,8 +2,8 @@
 
 #pragma once
 
-#include "Editor/Kismet/Public/WorkflowOrientedApp/WorkflowCentricApplication.h"
-#include "Editor/Kismet/Public/WorkflowOrientedApp/WorkflowTabManager.h"
+#include "WorkflowOrientedApp/WorkflowCentricApplication.h"
+#include "WorkflowOrientedApp/WorkflowTabManager.h"
 #include "Runtime/Launch/Resources/Version.h"
 
 class FPythonProjectEditor : public FWorkflowCentricApplication, public FGCObject
@@ -26,6 +26,7 @@ public:
 
 	// FSerializableObject interface
 	virtual void AddReferencedObjects(FReferenceCollector& Collector) override;
+	virtual FString GetReferencerName() const override { return TEXT("FPythonProjectEditor"); }
 	// End of FSerializableObject interface
 
 	static TSharedPtr<FPythonProjectEditor> Get()
@@ -105,14 +106,14 @@ protected:
 	TSharedPtr<FDocumentTracker> DocumentManager;
 
 	/** The Python project we are currently editing */
-	TWeakObjectPtr<UPythonProject> PythonProjectBeingEdited;
+	TObjectPtr<UPythonProject> PythonProjectBeingEdited;
 
 	TSharedPtr<class FPythonProjectEditorToolbar> ToolbarBuilder;
 
 	static TWeakPtr<FPythonProjectEditor> PythonEditor;
 
 	virtual bool CanSaveAsset() const override { return false; }
-#if ENGINE_MINOR_VERSION > 17
+#if UEP_LEGACY_ENGINE_MINOR_VERSION > 17
 	virtual bool CanFindInContentBrowser() const override { return false; }
 #endif
 };

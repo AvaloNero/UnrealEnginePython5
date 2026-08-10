@@ -56,7 +56,7 @@ PyObject *py_ue_set_material(ue_PyUObject *self, PyObject * args)
 	if (!material)
 		return PyErr_Format(PyExc_Exception, "argument is not a UMaterialInterface");
 
-#if ENGINE_MINOR_VERSION >= 20
+#if UEP_LEGACY_ENGINE_MINOR_VERSION >= 20
 #if WITH_EDITOR
 	UStaticMesh *mesh = ue_py_check_type<UStaticMesh>(self);
 	if (mesh)
@@ -150,7 +150,7 @@ PyObject *py_ue_set_material_static_switch_parameter(ue_PyUObject *self, PyObjec
 		bool isExisting = false;
 		for (auto& parameter : staticParameterSet.StaticSwitchParameters)
 		{
-#if ENGINE_MINOR_VERSION < 19
+#if UEP_LEGACY_ENGINE_MINOR_VERSION < 19
 			if (parameter.bOverride && parameter.ParameterName == parameterName)
 #else
 			if (parameter.bOverride && parameter.ParameterInfo.Name == parameterName)
@@ -165,7 +165,7 @@ PyObject *py_ue_set_material_static_switch_parameter(ue_PyUObject *self, PyObjec
 		if (!isExisting)
 		{
 			FStaticSwitchParameter SwitchParameter;
-#if ENGINE_MINOR_VERSION < 19
+#if UEP_LEGACY_ENGINE_MINOR_VERSION < 19
 			SwitchParameter.ParameterName = parameterName;
 #else
 			SwitchParameter.ParameterInfo.Name = parameterName;
@@ -237,6 +237,7 @@ PyObject *py_ue_get_material_static_switch_parameter(ue_PyUObject *self, PyObjec
 		return PyErr_Format(PyExc_Exception, "uobject is not a UMaterialInstance");
 	}
 
+#if WITH_EDITORONLY_DATA
 	FName parameterName(UTF8_TO_TCHAR(switchName));
 
 	UMaterialInstance *material_instance = (UMaterialInstance *)self->ue_object;
@@ -244,7 +245,7 @@ PyObject *py_ue_get_material_static_switch_parameter(ue_PyUObject *self, PyObjec
 	bool value = false;
 
 	FGuid guid;
-	material_instance->GetStaticSwitchParameterValue(parameterName, value, guid);
+	material_instance->GetStaticSwitchParameterValue(FHashedMaterialParameterInfo(parameterName), value, guid);
 
 	if (value)
 	{
@@ -252,6 +253,10 @@ PyObject *py_ue_get_material_static_switch_parameter(ue_PyUObject *self, PyObjec
 	}
 
 	Py_RETURN_FALSE;
+#else
+	return PyErr_Format(PyExc_NotImplementedError,
+		"material static switch parameter inspection requires an editor build");
+#endif
 }
 
 PyObject *py_ue_set_material_vector_parameter(ue_PyUObject *self, PyObject * args)
@@ -499,19 +504,18 @@ PyObject *py_ue_static_mesh_set_collision_for_lod(ue_PyUObject *self, PyObject *
 
 	UStaticMesh *mesh = (UStaticMesh *)self->ue_object;
 
-	bool enabled = false;
-	if (PyObject_IsTrue(py_bool))
-	{
-		enabled = true;
-	}
+	const int enabled_value = PyObject_IsTrue(py_bool);
+	if (enabled_value < 0)
+		return nullptr;
+	const bool enabled = enabled_value > 0;
 
-#if ENGINE_MINOR_VERSION >= 23
+#if UEP_LEGACY_ENGINE_MINOR_VERSION >= 23
 	FMeshSectionInfo info = mesh->GetSectionInfoMap().Get(lod_index, material_index);
 #else
 	FMeshSectionInfo info = mesh->SectionInfoMap.Get(lod_index, material_index);
 #endif
 	info.bEnableCollision = enabled;
-	mesh->SectionInfoMap.Set(lod_index, material_index, info);
+	mesh->GetSectionInfoMap().Set(lod_index, material_index, info);
 
 	mesh->MarkPackageDirty();
 
@@ -539,15 +543,14 @@ PyObject *py_ue_static_mesh_set_shadow_for_lod(ue_PyUObject *self, PyObject * ar
 
 	UStaticMesh *mesh = (UStaticMesh *)self->ue_object;
 
-	bool enabled = false;
-	if (PyObject_IsTrue(py_bool))
-	{
-		enabled = true;
-	}
+	const int enabled_value = PyObject_IsTrue(py_bool);
+	if (enabled_value < 0)
+		return nullptr;
+	const bool enabled = enabled_value > 0;
 
-	FMeshSectionInfo info = mesh->SectionInfoMap.Get(lod_index, material_index);
+	FMeshSectionInfo info = mesh->GetSectionInfoMap().Get(lod_index, material_index);
 	info.bCastShadow = enabled;
-	mesh->SectionInfoMap.Set(lod_index, material_index, info);
+	mesh->GetSectionInfoMap().Set(lod_index, material_index, info);
 
 	mesh->MarkPackageDirty();
 

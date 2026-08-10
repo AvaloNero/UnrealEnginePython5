@@ -5,8 +5,13 @@
 #include "PythonSmartDelegate.h"
 #include "UEPyUScriptStruct.h"
 #include "PythonHouseKeeper.h"
+#include "UObject/UObjectGlobals.h"
 
-// common wrappersno
+#ifndef UEP_WITH_DYNAMIC_CLASS_GENERATION
+#define UEP_WITH_DYNAMIC_CLASS_GENERATION 0
+#endif
+
+// common wrappers
 #include "Wrappers/UEPyFVector.h"
 #include "Wrappers/UEPyFRotator.h"
 #include "Wrappers/UEPyFQuat.h"
@@ -27,9 +32,17 @@
 
 UWorld *ue_get_uworld(ue_PyUObject *);
 AActor *ue_get_actor(ue_PyUObject *);
-PyObject *ue_py_convert_property(UProperty *, uint8 *, int32);
-bool ue_py_convert_pyobject(PyObject *, UProperty *, uint8 *, int32);
+PyObject *ue_py_convert_property(FProperty *, uint8 *, int32, bool copy_structs = false);
+bool ue_py_convert_pyobject(PyObject *, FProperty *, uint8 *, int32);
+PyObject *ue_py_new_fproperty_capsule(FProperty *);
+FProperty *ue_py_get_fproperty_from_capsule(PyObject *);
 ue_PyUObject *ue_is_pyuobject(PyObject *);
+
+template <typename T>
+T *ue_py_find_first_object(const TCHAR *Name)
+{
+	return FindFirstObject<T>(Name, EFindFirstObjectOptions::NativeFirst);
+}
 
 void ue_bind_events_for_py_class_by_attribute(UObject *, PyObject *);
 
@@ -51,7 +64,7 @@ template <typename T> T *ue_py_check_type(PyObject *py_obj)
 		return nullptr;
 	}
 
-	if (!ue_py_obj->ue_object || !ue_py_obj->ue_object->IsValidLowLevel() || ue_py_obj->ue_object->IsPendingKillOrUnreachable())
+	if (!::IsValid(ue_py_obj->ue_object))
 	{
 		UE_LOG(LogPython, Error, TEXT("invalid UObject in ue_PyUObject %p"), ue_py_obj);
 		return nullptr;
@@ -62,7 +75,7 @@ template <typename T> T *ue_py_check_type(PyObject *py_obj)
 
 template <typename T> T *ue_py_check_type(ue_PyUObject *py_obj)
 {
-	if (!py_obj->ue_object || !py_obj->ue_object->IsValidLowLevel() || py_obj->ue_object->IsPendingKillOrUnreachable())
+	if (!::IsValid(py_obj->ue_object))
 	{
 		UE_LOG(LogPython, Error, TEXT("invalid UObject in ue_PyUObject %p"), py_obj);
 		return nullptr;

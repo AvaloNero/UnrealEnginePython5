@@ -56,6 +56,10 @@ class FUnrealEnginePythonHouseKeeper : public FGCObject
 public:
 
 	virtual void AddReferencedObjects(FReferenceCollector& InCollector) override;
+	virtual FString GetReferencerName() const override
+	{
+		return TEXT("FUnrealEnginePythonHouseKeeper");
+	}
 	static FUnrealEnginePythonHouseKeeper *Get();
 	int32 RunGC();
 	bool IsValidPyUObject(ue_PyUObject *PyUObject);
@@ -85,5 +89,5 @@ private:
 
 	TArray<TSharedRef<FPythonSmartDelegate>> PyStaticSmartDelegatesTracker;
 
-	TArray<UObject *> PythonTrackedObjects;
+	TArray<TObjectPtr<UObject>> PythonTrackedObjects;
 };

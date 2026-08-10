@@ -78,13 +78,14 @@ PyObject *py_ue_sound_get_data(ue_PyUObject *self, PyObject * args)
 	if (!sound)
 		return PyErr_Format(PyExc_Exception, "UObject is not a USoundWave.");
 
-	FByteBulkData raw_data = sound->RawData;
-
-	char *data = (char *)raw_data.Lock(LOCK_READ_ONLY);
-	int32 data_size = raw_data.GetBulkDataSize();
-	PyObject *py_data = PyBytes_FromStringAndSize(data, data_size);
-	raw_data.Unlock();
-	return py_data;
+#if WITH_EDITORONLY_DATA
+	const FSharedBuffer RawData = sound->RawData.GetPayload().Get();
+	return PyBytes_FromStringAndSize(
+		reinterpret_cast<const char *>(RawData.GetData()),
+		static_cast<Py_ssize_t>(RawData.GetSize()));
+#else
+	return PyErr_Format(PyExc_NotImplementedError, "imported SoundWave data is only available in editor builds");
+#endif
 }
 
 PyObject *py_ue_sound_set_data(ue_PyUObject *self, PyObject * args)
@@ -100,17 +101,23 @@ PyObject *py_ue_sound_set_data(ue_PyUObject *self, PyObject * args)
 
 	USoundWave *sound = ue_py_check_type<USoundWave>(self);
 	if (!sound)
+	{
+		PyBuffer_Release(&sound_buffer);
 		return PyErr_Format(PyExc_Exception, "UObject is not a USoundWave.");
+	}
 
+#if WITH_EDITORONLY_DATA
 	sound->FreeResources();
 	sound->InvalidateCompressedData();
-
-	sound->RawData.Lock(LOCK_READ_WRITE);
-	void *data = sound->RawData.Realloc(sound_buffer.len);
-	FMemory::Memcpy(data, sound_buffer.buf, sound_buffer.len);
-	sound->RawData.Unlock();
+	sound->RawData.UpdatePayload(FSharedBuffer::Clone(sound_buffer.buf, sound_buffer.len), sound);
+	sound->MarkPackageDirty();
+	PyBuffer_Release(&sound_buffer);
 
 	Py_RETURN_NONE;
+#else
+	PyBuffer_Release(&sound_buffer);
+	return PyErr_Format(PyExc_NotImplementedError, "imported SoundWave data is only writable in editor builds");
+#endif
 }
 
 PyObject *py_ue_play_sound_at_location(ue_PyUObject *self, PyObject * args)
@@ -136,7 +143,7 @@ PyObject *py_ue_play_sound_at_location(ue_PyUObject *self, PyObject * args)
 	}
 	else if (PyUnicodeOrString_Check(sound))
 	{
-		sound_object = FindObject<USoundBase>(ANY_PACKAGE, UTF8_TO_TCHAR(UEPyUnicode_AsUTF8(sound)));
+		sound_object = ue_py_find_first_object<USoundBase>(UTF8_TO_TCHAR(UEPyUnicode_AsUTF8(sound)));
 	}
 
 	if (!sound_object)

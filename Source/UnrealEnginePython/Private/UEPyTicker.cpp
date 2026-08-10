@@ -6,8 +6,7 @@ static void ue_pyfdelegatehandle_dealloc(ue_PyFDelegateHandle *self)
 {
 	if (!self->garbaged)
 	{
-		FTicker::GetCoreTicker().RemoveTicker(self->dhandle);
-		// useless ;)
+		FTSTicker::RemoveTicker(self->dhandle);
 		self->garbaged = true;
 	}
 
@@ -15,6 +14,8 @@ static void ue_pyfdelegatehandle_dealloc(ue_PyFDelegateHandle *self)
 	{
 		self->delegate_ptr.Reset();
 	}
+	self->delegate_ptr.~ue_FPythonSmartDelegatePtr();
+	self->dhandle.~ue_FTickerDelegateHandle();
 
 	Py_TYPE(self)->tp_free((PyObject *)self);
 }
@@ -79,6 +80,9 @@ PyObject *py_unreal_engine_add_ticker(PyObject * self, PyObject * args)
 	{
 		return PyErr_Format(PyExc_Exception, "unable to allocate FDelegateHandle python object");
 	}
+	new(&ret->dhandle) ue_FTickerDelegateHandle();
+	new(&ret->delegate_ptr) ue_FPythonSmartDelegatePtr();
+	ret->garbaged = true;
 
 	FTickerDelegate ticker_delegate;
 	TSharedRef<FPythonSmartDelegate> py_delegate = MakeShareable(new FPythonSmartDelegate);
@@ -86,13 +90,13 @@ PyObject *py_unreal_engine_add_ticker(PyObject * self, PyObject * args)
 
 	ticker_delegate.BindSP(py_delegate, &FPythonSmartDelegate::Tick);
 
-	ret->dhandle = FTicker::GetCoreTicker().AddTicker(ticker_delegate, delay);
+	ret->dhandle = FTSTicker::GetCoreTicker().AddTicker(ticker_delegate, delay);
 	if (!ret->dhandle.IsValid())
 	{
 		Py_DECREF(ret);
-		return PyErr_Format(PyExc_Exception, "unable to add FTicker");
+		return PyErr_Format(PyExc_Exception, "unable to add FTSTicker");
 	}
-	new(&ret->delegate_ptr) TSharedPtr<FPythonSmartDelegate>(py_delegate);
+	ret->delegate_ptr = py_delegate;
 	ret->garbaged = false;
 	return (PyObject *)ret;
 }
@@ -113,7 +117,7 @@ PyObject *py_unreal_engine_remove_ticker(PyObject * self, PyObject * args)
 
 	if (!py_handle->garbaged)
 	{
-		FTicker::GetCoreTicker().RemoveTicker(py_handle->dhandle);
+		FTSTicker::RemoveTicker(py_handle->dhandle);
 		py_handle->garbaged = true;
 		if (py_handle->delegate_ptr.IsValid())
 		{

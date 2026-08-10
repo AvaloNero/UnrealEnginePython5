@@ -2,7 +2,7 @@
 
 
 #if WITH_EDITOR
-#include "Runtime/Engine/Classes/Engine/UserDefinedStruct.h"
+#include "StructUtils/UserDefinedStruct.h"
 #include "Editor/UnrealEd/Classes/UserDefinedStructure/UserDefinedStructEditorData.h"
 #include "Editor/UnrealEd/Public/Kismet2/StructureEditorUtils.h"
 
@@ -34,7 +34,7 @@ PyObject *py_ue_struct_add_variable(ue_PyUObject * self, PyObject * args)
 
 	FStructureEditorUtils::OnStructureChanged(u_struct, FStructureEditorUtils::EStructureEditorChangeInfo::AddedVariable);
 
-	return py_ue_new_owned_uscriptstruct(FindObject<UScriptStruct>(ANY_PACKAGE, UTF8_TO_TCHAR((char *)"Guid")), (uint8 *)&var->VarGuid);
+	return py_ue_new_owned_uscriptstruct(ue_py_find_first_object<UScriptStruct>(TEXT("Guid")), (uint8 *)&var->VarGuid);
 }
 
 PyObject *py_ue_struct_get_variables(ue_PyUObject * self, PyObject * args)
@@ -104,7 +104,16 @@ PyObject *py_ue_struct_move_variable_up(ue_PyUObject * self, PyObject * args)
 	if (!guid)
 		return PyErr_Format(PyExc_Exception, "object is not a FGuid");
 
-	if (FStructureEditorUtils::MoveVariable(u_struct, *guid, FStructureEditorUtils::EMoveDirection::MD_Up))
+	const TArray<FStructVariableDescription>& Variables = FStructureEditorUtils::GetVarDesc(u_struct);
+	const int32 VariableIndex = Variables.IndexOfByPredicate([guid](const FStructVariableDescription& Variable)
+	{
+		return Variable.VarGuid == *guid;
+	});
+	if (VariableIndex > 0 && FStructureEditorUtils::MoveVariable(
+		u_struct,
+		*guid,
+		Variables[VariableIndex - 1].VarGuid,
+		FStructureEditorUtils::PositionAbove))
 	{
 		Py_RETURN_TRUE;
 	}
@@ -132,7 +141,16 @@ PyObject *py_ue_struct_move_variable_down(ue_PyUObject * self, PyObject * args)
 	if (!guid)
 		return PyErr_Format(PyExc_Exception, "object is not a FGuid");
 
-	if (FStructureEditorUtils::MoveVariable(u_struct, *guid, FStructureEditorUtils::EMoveDirection::MD_Down))
+	const TArray<FStructVariableDescription>& Variables = FStructureEditorUtils::GetVarDesc(u_struct);
+	const int32 VariableIndex = Variables.IndexOfByPredicate([guid](const FStructVariableDescription& Variable)
+	{
+		return Variable.VarGuid == *guid;
+	});
+	if (VariableIndex != INDEX_NONE && VariableIndex + 1 < Variables.Num() && FStructureEditorUtils::MoveVariable(
+		u_struct,
+		*guid,
+		Variables[VariableIndex + 1].VarGuid,
+		FStructureEditorUtils::PositionBelow))
 	{
 		Py_RETURN_TRUE;
 	}

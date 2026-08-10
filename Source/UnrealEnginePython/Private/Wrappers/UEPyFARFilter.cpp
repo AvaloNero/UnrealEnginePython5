@@ -5,10 +5,13 @@
 static PyObject *py_ue_farfilter_append(ue_PyFARFilter *self, PyObject * args)
 {
 	PyObject *pyfilter = nullptr;
-	py_ue_sync_farfilter((PyObject *)self);
-	if (!PyArg_ParseTuple(args, "|O:append", &pyfilter))
+	if (!PyArg_ParseTuple(args, "O:append", &pyfilter))
 		return NULL;
 	ue_PyFARFilter *filter = py_ue_is_farfilter(pyfilter);
+	if (!filter)
+		return PyErr_Format(PyExc_TypeError, "argument is not a FARFilter");
+	if (!py_ue_sync_farfilter((PyObject *)self) || !py_ue_sync_farfilter((PyObject *)filter))
+		return nullptr;
 	self->filter.Append(filter->filter);
 	Py_RETURN_NONE;
 }
@@ -22,7 +25,8 @@ static PyObject *py_ue_farfilter_clear(ue_PyFARFilter *self)
 
 static PyObject *py_ue_farfilter_is_empty(ue_PyFARFilter *self, PyObject * args)
 {
-	py_ue_sync_farfilter((PyObject *)self);
+	if (!py_ue_sync_farfilter((PyObject *)self))
+		return nullptr;
 	if (self->filter.IsEmpty())
 		Py_RETURN_TRUE;
 	Py_RETURN_FALSE;
@@ -192,25 +196,8 @@ static PyObject * ue_py_farfilter_new(PyTypeObject *type, PyObject *args, PyObje
 		}
 		PyObject *collections_module_dict = PyModule_GetDict(collections);
 		PyObject *defaultdict_cls = PyDict_GetItemString(collections_module_dict, "defaultdict");
-
-
-		PyObject *builtins_module = PyImport_ImportModule("builtins");
-		if (!builtins_module)
-		{
-			unreal_engine_py_log_error();
-			Py_DECREF(self);
-			return NULL;
-		}
-		PyObject *builtins_dict = PyModule_GetDict(builtins_module);
-		PyObject *set_cls = PyDict_GetItemString(builtins_dict, "set");
-		// required because PyTuple_SetItem below will steal a reference
-		Py_INCREF(set_cls);
-		
-
-		PyObject *py_args = PyTuple_New(1);
-		PyTuple_SetItem(py_args, 0, set_cls);
-		PyObject *default_dict = PyObject_CallObject(defaultdict_cls, py_args);
-		Py_DECREF(py_args);
+		PyObject *default_dict = PyObject_CallFunctionObjArgs(defaultdict_cls, (PyObject *)&PySet_Type, nullptr);
+		Py_DECREF(collections);
 		if (!default_dict)
 		{
 			unreal_engine_py_log_error();
@@ -272,13 +259,7 @@ void py_ue_clear_seq(PyObject *pyseq)
 {
 	if (PyList_Check(pyseq))
 	{
-		Py_ssize_t pysize = PyObject_Length(pyseq);
-		PyObject *pyitem;
-		for (int i = 0; i < (int)pysize; i++)
-		{
-			pyitem = PyList_GetItem(pyseq, i);
-			PyObject_DelItem(pyseq, pyitem);
-		}
+		PyList_SetSlice(pyseq, 0, PyList_GET_SIZE(pyseq), nullptr);
 	}
 	else if (PySet_Check(pyseq))
 	{
@@ -286,14 +267,7 @@ void py_ue_clear_seq(PyObject *pyseq)
 	}
 	else if (PyDict_Check(pyseq))
 	{
-		PyObject *pykeys = PyDict_Keys(pyseq);
-		Py_ssize_t pysize = PyObject_Length(pykeys);
-		PyObject *pykey;
-		for (int i = 0; i < (int)pysize; i++)
-		{
-			pykey = PyList_GetItem(pykeys, i);
-			PyObject_DelItem(pyseq, pykey);
-		}
+		PyDict_Clear(pyseq);
 	}
 }
 
@@ -307,58 +281,195 @@ void py_ue_clear_farfilter(ue_PyFARFilter *pyfilter)
 	py_ue_clear_seq(pyfilter->tags_and_values);
 }
 
-void ue_sync_farfilter_name_array(PyObject *pylist, TArray<FName> &uelist)
+static bool GetPythonString(PyObject *py_object, FString& OutString, const char *field_name)
 {
-	Py_ssize_t pylist_len = PyList_Size(pylist);
-	uelist.Reset(pylist_len);
-	for (int i = 0; i < (int)pylist_len; i++)
+	if (!PyUnicode_Check(py_object))
 	{
-		PyObject *py_item = PyList_GetItem(pylist, i);
-		uelist.Add(FName(UTF8_TO_TCHAR(UEPyUnicode_AsUTF8(py_item))));
+		PyErr_Format(PyExc_TypeError, "%s entries must be strings", field_name);
+		return false;
 	}
+
+	const char *utf8 = UEPyUnicode_AsUTF8(py_object);
+	if (!utf8)
+		return false;
+	OutString = UTF8_TO_TCHAR(utf8);
+	return true;
 }
 
-void py_ue_sync_farfilter(PyObject *pyobj)
+static bool SyncNameArray(PyObject *pylist, TArray<FName> &uelist, const char *field_name)
+{
+	if (!PyList_Check(pylist))
+	{
+		PyErr_Format(PyExc_TypeError, "%s must be a list", field_name);
+		return false;
+	}
+
+	Py_ssize_t pylist_len = PyList_Size(pylist);
+	uelist.Reset(pylist_len);
+	for (Py_ssize_t i = 0; i < pylist_len; i++)
+	{
+		PyObject *py_item = PyList_GetItem(pylist, i);
+		FString Item;
+		if (!GetPythonString(py_item, Item, field_name))
+			return false;
+		uelist.Add(FName(*Item));
+	}
+	return true;
+}
+
+static bool SyncClassPathArray(PyObject *pylist, TArray<FTopLevelAssetPath>& uelist, const char *field_name)
+{
+	if (!PyList_Check(pylist))
+	{
+		PyErr_Format(PyExc_TypeError, "%s must be a list", field_name);
+		return false;
+	}
+
+	uelist.Reset(PyList_GET_SIZE(pylist));
+	for (Py_ssize_t i = 0; i < PyList_GET_SIZE(pylist); ++i)
+	{
+		FString ClassName;
+		if (!GetPythonString(PyList_GetItem(pylist, i), ClassName, field_name))
+			return false;
+
+		FTopLevelAssetPath ClassPath = ClassName.StartsWith(TEXT("/"))
+			? FTopLevelAssetPath(ClassName)
+			: UClass::TryConvertShortTypeNameToPathName<UStruct>(*ClassName, ELogVerbosity::NoLogging);
+		if (ClassPath.IsNull())
+		{
+			PyErr_Format(PyExc_ValueError, "unable to resolve class path '%s'", TCHAR_TO_UTF8(*ClassName));
+			return false;
+		}
+		uelist.Add(ClassPath);
+	}
+	return true;
+}
+
+static bool SyncSoftObjectPathArray(PyObject *pylist, TArray<FSoftObjectPath>& uelist, const char *field_name)
+{
+	if (!PyList_Check(pylist))
+	{
+		PyErr_Format(PyExc_TypeError, "%s must be a list", field_name);
+		return false;
+	}
+
+	uelist.Reset(PyList_GET_SIZE(pylist));
+	for (Py_ssize_t i = 0; i < PyList_GET_SIZE(pylist); ++i)
+	{
+		FString ObjectPathString;
+		if (!GetPythonString(PyList_GetItem(pylist, i), ObjectPathString, field_name))
+			return false;
+		FSoftObjectPath ObjectPath(ObjectPathString);
+		if (ObjectPath.IsNull())
+		{
+			PyErr_Format(PyExc_ValueError, "invalid soft object path '%s'", TCHAR_TO_UTF8(*ObjectPathString));
+			return false;
+		}
+		uelist.Add(ObjectPath);
+	}
+	return true;
+}
+
+static bool SyncRecursiveClassExclusions(PyObject *pyset, TSet<FTopLevelAssetPath>& OutPaths)
+{
+	PyObject *iterator = PyObject_GetIter(pyset);
+	if (!iterator)
+	{
+		PyErr_SetString(PyExc_TypeError, "recursive_classes_exclusion_set must be iterable");
+		return false;
+	}
+
+	OutPaths.Reset();
+	while (PyObject *py_item = PyIter_Next(iterator))
+	{
+		FString ClassName;
+		const bool bStringValid = GetPythonString(py_item, ClassName, "recursive_classes_exclusion_set");
+		Py_DECREF(py_item);
+		if (!bStringValid)
+		{
+			Py_DECREF(iterator);
+			return false;
+		}
+
+		FTopLevelAssetPath ClassPath = ClassName.StartsWith(TEXT("/"))
+			? FTopLevelAssetPath(ClassName)
+			: UClass::TryConvertShortTypeNameToPathName<UStruct>(*ClassName, ELogVerbosity::NoLogging);
+		if (ClassPath.IsNull())
+		{
+			Py_DECREF(iterator);
+			PyErr_Format(PyExc_ValueError, "unable to resolve class path '%s'", TCHAR_TO_UTF8(*ClassName));
+			return false;
+		}
+		OutPaths.Add(ClassPath);
+	}
+	Py_DECREF(iterator);
+	return !PyErr_Occurred();
+}
+
+bool py_ue_sync_farfilter(PyObject *pyobj)
 {
 	ue_PyFARFilter *pyfilter = py_ue_is_farfilter(pyobj);
-	ue_sync_farfilter_name_array(pyfilter->class_names, pyfilter->filter.ClassNames);
-	ue_sync_farfilter_name_array(pyfilter->object_paths, pyfilter->filter.ObjectPaths);
-	ue_sync_farfilter_name_array(pyfilter->package_names, pyfilter->filter.PackageNames);
-	ue_sync_farfilter_name_array(pyfilter->package_paths, pyfilter->filter.PackagePaths);
-
-	PyObject *pyset = pyfilter->recursive_classes_exclusion_set;
-	Py_ssize_t pyset_len = PySet_Size(pyset);
-	PyObject *py_item;
-	pyfilter->filter.RecursiveClassesExclusionSet.Reset();
-	for (int i = 0; i < (int)pyset_len; i++)
+	if (!pyfilter)
 	{
-		py_item = PyList_GetItem(pyset, i);
-		pyfilter->filter.RecursiveClassesExclusionSet.Add(FName(UTF8_TO_TCHAR(UEPyUnicode_AsUTF8(py_item))));
+		PyErr_SetString(PyExc_TypeError, "object is not a FARFilter");
+		return false;
+	}
+
+	if (!SyncClassPathArray(pyfilter->class_names, pyfilter->filter.ClassPaths, "class_names") ||
+		!SyncSoftObjectPathArray(pyfilter->object_paths, pyfilter->filter.SoftObjectPaths, "object_paths") ||
+		!SyncNameArray(pyfilter->package_names, pyfilter->filter.PackageNames, "package_names") ||
+		!SyncNameArray(pyfilter->package_paths, pyfilter->filter.PackagePaths, "package_paths") ||
+		!SyncRecursiveClassExclusions(pyfilter->recursive_classes_exclusion_set, pyfilter->filter.RecursiveClassPathsExclusionSet))
+	{
+		return false;
 	}
 
 	PyObject *pykey, *pyvalue;
-	Py_ssize_t pypos;
-	FName ukey;
+	Py_ssize_t pypos = 0;
 	pyfilter->filter.TagsAndValues.Reset();
+	if (!PyDict_Check(pyfilter->tags_and_values))
+	{
+		PyErr_SetString(PyExc_TypeError, "tags_and_values must be a dictionary");
+		return false;
+	}
 	while (PyDict_Next(pyfilter->tags_and_values, &pypos, &pykey, &pyvalue))
 	{
-		ukey = UTF8_TO_TCHAR(UEPyUnicode_AsUTF8(pykey));
-		pyset_len = PySet_Size(pyvalue);
-		for (int i = 0; i < (int)pyset_len; i++)
+		FString KeyString;
+		if (!GetPythonString(pykey, KeyString, "tags_and_values keys"))
+			return false;
+		const FName Key(*KeyString);
+
+		PyObject *iterator = PyObject_GetIter(pyvalue);
+		if (!iterator)
 		{
-			py_item = PyList_GetItem(pyset, i);
-#if ENGINE_MINOR_VERSION < 20
-			pyfilter->filter.TagsAndValues.AddUnique(ukey, UTF8_TO_TCHAR(UEPyUnicode_AsUTF8(py_item)));
-#else
-			pyfilter->filter.TagsAndValues.AddUnique(ukey, FString(UTF8_TO_TCHAR(UEPyUnicode_AsUTF8(py_item))));
-#endif
+			PyErr_SetString(PyExc_TypeError, "tags_and_values values must be iterable");
+			return false;
 		}
+
+		while (PyObject *py_item = PyIter_Next(iterator))
+		{
+			FString Value;
+			const bool bStringValid = GetPythonString(py_item, Value, "tags_and_values entries");
+			Py_DECREF(py_item);
+			if (!bStringValid)
+			{
+				Py_DECREF(iterator);
+				return false;
+			}
+			pyfilter->filter.TagsAndValues.AddUnique(Key, TOptional<FString>(MoveTemp(Value)));
+		}
+		Py_DECREF(iterator);
+		if (PyErr_Occurred())
+			return false;
 	}
+	return true;
 }
 
 PyObject *py_ue_new_farfilter(FARFilter filter)
 {
 	ue_PyFARFilter *ret = (ue_PyFARFilter *)PyObject_CallObject((PyObject *)&ue_PyFARFilterType, NULL);
+	if (!ret)
+		return nullptr;
 	ret->filter = filter;
 	return (PyObject *)ret;
 }

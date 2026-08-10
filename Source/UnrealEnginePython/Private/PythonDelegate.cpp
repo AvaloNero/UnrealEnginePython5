@@ -37,10 +37,10 @@ void UPythonDelegate::ProcessEvent(UFunction *function, void *Parms)
 		py_args = PyTuple_New(signature->NumParms);
 		Py_ssize_t argn = 0;
 
-		TFieldIterator<UProperty> PArgs(signature);
+		TFieldIterator<FProperty> PArgs(signature);
 		for (; PArgs && argn < signature->NumParms && ((PArgs->PropertyFlags & (CPF_Parm | CPF_ReturnParm)) == CPF_Parm); ++PArgs)
 		{
-			UProperty *prop = *PArgs;
+			FProperty *prop = *PArgs;
 			PyObject *arg = ue_py_convert_property(prop, (uint8 *)Parms, 0);
 			if (!arg)
 			{
@@ -63,7 +63,7 @@ void UPythonDelegate::ProcessEvent(UFunction *function, void *Parms)
 	// currently useless as events do not return a value
 	/*
 	if (signature_set) {
-		UProperty *return_property = signature->GetReturnProperty();
+		FProperty *return_property = signature->GetReturnProperty();
 		if (return_property && signature->ReturnValueOffset != MAX_uint16) {
 			if (!ue_py_convert_pyobject(ret, return_property, (uint8 *)Parms)) {
 				UE_LOG(LogPython, Error, TEXT("Invalid return value type for delegate"));
@@ -104,16 +104,17 @@ void UPythonDelegate::PyInputAxisHandler(float value)
 
 bool UPythonDelegate::UsesPyCallable(PyObject *other)
 {
-    ue_PyCallable *other_callable = (ue_PyCallable*)other;
-    ue_PyCallable *this_callable = (ue_PyCallable*)py_callable;
-    return other_callable->u_function == this_callable->u_function && other_callable->u_target == this_callable->u_target;
+    return py_callable == other;
 }
 
 UPythonDelegate::~UPythonDelegate()
 {
-	FScopePythonGIL gil;
-
-	Py_XDECREF(py_callable);
+	if (Py_IsInitialized())
+	{
+		FScopePythonGIL gil;
+		Py_XDECREF(py_callable);
+	}
+	py_callable = nullptr;
 #if defined(UEPY_MEMORY_DEBUG)
 	UE_LOG(LogPython, Warning, TEXT("PythonDelegate %p callable XDECREF'ed"), this);
 #endif

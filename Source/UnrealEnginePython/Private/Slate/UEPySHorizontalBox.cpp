@@ -58,7 +58,7 @@ static PyObject *ue_py_shorizontal_box_add(ue_PySHorizontalBox *self, PyObject *
 		return nullptr;
 	}
 
-	SHorizontalBox::FSlot &fslot = py_SHorizontalBox->AddSlot();
+	auto fslot = py_SHorizontalBox->AddSlot();
 	fslot.AttachWidget(Child.ToSharedRef());
 
 	Py_RETURN_SLATE_SELF;

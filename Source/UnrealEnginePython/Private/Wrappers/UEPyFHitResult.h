@@ -5,6 +5,7 @@
 #include "UEPyModule.h"
 
 #include "Engine/EngineTypes.h"
+#include "Engine/HitResult.h"
 
 typedef struct
 {

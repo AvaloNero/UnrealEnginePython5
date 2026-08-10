@@ -1,0 +1,16 @@
+{
+  "FileVersion": 3,
+  "EngineAssociation": "5.8",
+  "Category": "Samples",
+  "Description": "UE 5.8 Third Person template with gameplay driven by UnrealEnginePython",
+  "Plugins": [
+    {
+      "Name": "UnrealEnginePython",
+      "Enabled": true
+    },
+    {
+      "Name": "PythonScriptPlugin",
+      "Enabled": false
+    }
+  ]
+}

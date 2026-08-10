@@ -15,7 +15,7 @@
 #include "UnrealEngine.h"
 #include "Runtime/Engine/Classes/Engine/GameViewportClient.h"
 
-#if ENGINE_MINOR_VERSION >= 18
+#if UEP_LEGACY_ENGINE_MINOR_VERSION >= 18
 #include "HAL/PlatformApplicationMisc.h"
 #endif
 
@@ -27,6 +27,8 @@
 
 #include "Runtime/Slate/Public/Framework/Application/SlateApplication.h"
 #include "Runtime/CoreUObject/Public/UObject/UObjectIterator.h"
+#include "RHICommandList.h"
+#include "TickableObjectRenderThread.h"
 
 PyObject *py_unreal_engine_log(PyObject * self, PyObject * args)
 {
@@ -177,7 +179,7 @@ PyObject *py_unreal_engine_get_up_vector(PyObject * self, PyObject * args)
 
 PyObject *py_unreal_engine_get_content_dir(PyObject * self, PyObject * args)
 {
-#if ENGINE_MINOR_VERSION >= 18
+#if UEP_LEGACY_ENGINE_MINOR_VERSION >= 18
 	return PyUnicode_FromString(TCHAR_TO_UTF8(*FPaths::ProjectContentDir()));
 #else
 	return PyUnicode_FromString(TCHAR_TO_UTF8(*FPaths::GameContentDir()));
@@ -186,7 +188,7 @@ PyObject *py_unreal_engine_get_content_dir(PyObject * self, PyObject * args)
 
 PyObject *py_unreal_engine_get_game_saved_dir(PyObject * self, PyObject * args)
 {
-#if ENGINE_MINOR_VERSION >= 18
+#if UEP_LEGACY_ENGINE_MINOR_VERSION >= 18
 	return PyUnicode_FromString(TCHAR_TO_UTF8(*FPaths::ProjectSavedDir()));
 #else
 	return PyUnicode_FromString(TCHAR_TO_UTF8(*FPaths::GameSavedDir()));
@@ -215,7 +217,8 @@ PyObject *py_unreal_engine_object_path_to_package_name(PyObject * self, PyObject
 	{
 		return NULL;
 	}
-	return PyUnicode_FromString(TCHAR_TO_UTF8(*FPackageName::ObjectPathToPackageName(UTF8_TO_TCHAR(path))));
+	const FString PackageName = FPackageName::ObjectPathToPackageName(FString(UTF8_TO_TCHAR(path)));
+	return PyUnicode_FromString(TCHAR_TO_UTF8(*PackageName));
 }
 
 PyObject *py_unreal_engine_get_path(PyObject * self, PyObject * args)
@@ -259,7 +262,7 @@ PyObject *py_unreal_engine_find_class(PyObject * self, PyObject * args)
 		return NULL;
 	}
 
-	UClass *u_class = FindObject<UClass>(ANY_PACKAGE, UTF8_TO_TCHAR(name));
+	UClass *u_class = ue_py_find_first_object<UClass>(UTF8_TO_TCHAR(name));
 
 	if (!u_class)
 		return PyErr_Format(PyExc_Exception, "unable to find class %s", name);
@@ -275,7 +278,7 @@ PyObject *py_unreal_engine_find_enum(PyObject * self, PyObject * args)
 		return NULL;
 	}
 
-	UEnum *u_enum = FindObject<UEnum>(ANY_PACKAGE, UTF8_TO_TCHAR(name));
+	UEnum *u_enum = ue_py_find_first_object<UEnum>(UTF8_TO_TCHAR(name));
 
 	if (!u_enum)
 		return PyErr_Format(PyExc_Exception, "unable to find enum %s", name);
@@ -315,7 +318,7 @@ PyObject *py_unreal_engine_unload_package(PyObject * self, PyObject * args)
 	}
 
 	FText outErrorMsg;
-	if (!PackageTools::UnloadPackages({ packageToUnload }, outErrorMsg))
+	if (!UPackageTools::UnloadPackages({ packageToUnload }, outErrorMsg))
 	{
 		return PyErr_Format(PyExc_Exception, "%s", TCHAR_TO_UTF8(*outErrorMsg.ToString()));
 	}
@@ -332,7 +335,7 @@ PyObject *py_unreal_engine_get_package_filename(PyObject * self, PyObject * args
 	}
 
 	FString Filename;
-	if (!FPackageName::DoesPackageExist(FString(UTF8_TO_TCHAR(name)), nullptr, &Filename))
+	if (!FPackageName::DoesPackageExist(FString(UTF8_TO_TCHAR(name)), &Filename))
 		return PyErr_Format(PyExc_Exception, "package does not exist");
 
 	return PyUnicode_FromString(TCHAR_TO_UTF8(*Filename));
@@ -389,7 +392,7 @@ PyObject *py_unreal_engine_find_struct(PyObject * self, PyObject * args)
 		return NULL;
 	}
 
-	UScriptStruct *u_struct = FindObject<UScriptStruct>(ANY_PACKAGE, UTF8_TO_TCHAR(name));
+	UScriptStruct *u_struct = ue_py_find_first_object<UScriptStruct>(UTF8_TO_TCHAR(name));
 
 	if (!u_struct)
 		return PyErr_Format(PyExc_Exception, "unable to find struct %s", name);
@@ -467,7 +470,7 @@ PyObject *py_unreal_engine_string_to_guid(PyObject * self, PyObject * args)
 
 	if (FGuid::Parse(FString(str), guid))
 	{
-		return py_ue_new_owned_uscriptstruct(FindObject<UScriptStruct>(ANY_PACKAGE, UTF8_TO_TCHAR((char *)"Guid")), (uint8 *)&guid);
+		return py_ue_new_owned_uscriptstruct(ue_py_find_first_object<UScriptStruct>(TEXT("Guid")), (uint8 *)&guid);
 	}
 
 	return PyErr_Format(PyExc_Exception, "unable to build FGuid");
@@ -478,7 +481,7 @@ PyObject *py_unreal_engine_new_guid(PyObject * self, PyObject * args)
 
 	FGuid guid = FGuid::NewGuid();
 
-	return py_ue_new_owned_uscriptstruct(FindObject<UScriptStruct>(ANY_PACKAGE, UTF8_TO_TCHAR((char *)"Guid")), (uint8 *)&guid);
+	return py_ue_new_owned_uscriptstruct(ue_py_find_first_object<UScriptStruct>(TEXT("Guid")), (uint8 *)&guid);
 }
 
 PyObject *py_unreal_engine_guid_to_string(PyObject * self, PyObject * args)
@@ -529,7 +532,7 @@ PyObject *py_unreal_engine_engine_tick(PyObject * self, PyObject * args)
 PyObject *py_unreal_engine_tick_rendering_tickables(PyObject * self, PyObject * args)
 {
 	Py_BEGIN_ALLOW_THREADS;
-	TickRenderingTickables();
+	TickRenderingTickables(FRHICommandListImmediate::Get());
 	Py_END_ALLOW_THREADS;
 
 	Py_RETURN_NONE;
@@ -550,7 +553,7 @@ PyObject *py_unreal_engine_find_object(PyObject * self, PyObject * args)
 		return NULL;
 	}
 
-	UObject *u_object = FindObject<UObject>(ANY_PACKAGE, UTF8_TO_TCHAR(name));
+	UObject *u_object = ue_py_find_first_object<UObject>(UTF8_TO_TCHAR(name));
 
 	if (!u_object)
 		return PyErr_Format(PyExc_Exception, "unable to find object %s", name);
@@ -1045,16 +1048,15 @@ PyObject *py_unreal_engine_create_package(PyObject *self, PyObject * args)
 		return nullptr;
 	}
 
-	UPackage *u_package = (UPackage *)StaticFindObject(nullptr, ANY_PACKAGE, UTF8_TO_TCHAR(name), true);
+	UPackage *u_package = FindPackage(nullptr, UTF8_TO_TCHAR(name));
 	// create a new package if it does not exist
 	if (u_package)
 	{
 		return PyErr_Format(PyExc_Exception, "package %s already exists", TCHAR_TO_UTF8(*u_package->GetPathName()));
 	}
-	u_package = CreatePackage(nullptr, UTF8_TO_TCHAR(name));
+	u_package = CreatePackage(UTF8_TO_TCHAR(name));
 	if (!u_package)
 		return PyErr_Format(PyExc_Exception, "unable to create package");
-	u_package->FileName = *FPackageName::LongPackageNameToFilename(UTF8_TO_TCHAR(name), FPackageName::GetAssetPackageExtension());
 
 	u_package->FullyLoad();
 	u_package->MarkPackageDirty();
@@ -1072,14 +1074,13 @@ PyObject *py_unreal_engine_get_or_create_package(PyObject *self, PyObject * args
 		return nullptr;
 	}
 
-	UPackage *u_package = (UPackage *)StaticFindObject(nullptr, ANY_PACKAGE, UTF8_TO_TCHAR(name), true);
+	UPackage *u_package = FindPackage(nullptr, UTF8_TO_TCHAR(name));
 	// create a new package if it does not exist
 	if (!u_package)
 	{
-		u_package = CreatePackage(nullptr, UTF8_TO_TCHAR(name));
+		u_package = CreatePackage(UTF8_TO_TCHAR(name));
 		if (!u_package)
 			return PyErr_Format(PyExc_Exception, "unable to create package");
-		u_package->FileName = *FPackageName::LongPackageNameToFilename(UTF8_TO_TCHAR(name), FPackageName::GetAssetPackageExtension());
 
 		u_package->FullyLoad();
 		u_package->MarkPackageDirty();
@@ -1284,7 +1285,10 @@ PyObject *py_unreal_engine_copy_properties_for_unrelated_objects(PyObject * self
 		return PyErr_Format(PyExc_Exception, "argument is not a UObject");
 
 	UEngine::FCopyPropertiesForUnrelatedObjectsParams params;
-	params.bAggressiveDefaultSubobjectReplacement = (py_aggressive_default_subobject_replacement && PyObject_IsTrue(py_aggressive_default_subobject_replacement));
+	if (py_aggressive_default_subobject_replacement && PyObject_IsTrue(py_aggressive_default_subobject_replacement))
+	{
+		UE_LOG(LogPython, Warning, TEXT("aggressive_default_subobject_replacement is no longer supported by UE5"));
+	}
 	params.bCopyDeprecatedProperties = (py_copy_deprecated_properties && PyObject_IsTrue(py_copy_deprecated_properties));
 	params.bDoDelta = (py_do_delta && PyObject_IsTrue(py_do_delta));
 	params.bNotifyObjectReplacement = (py_notify_object_replacement && PyObject_IsTrue(py_notify_object_replacement));
@@ -1324,7 +1328,7 @@ PyObject *py_unreal_engine_clipboard_copy(PyObject * self, PyObject * args)
 		return nullptr;
 	}
 
-#if ENGINE_MINOR_VERSION >= 18
+#if UEP_LEGACY_ENGINE_MINOR_VERSION >= 18
 	FPlatformApplicationMisc::ClipboardCopy(UTF8_TO_TCHAR(text));
 #else
 	FGenericPlatformMisc::ClipboardCopy(UTF8_TO_TCHAR(text));
@@ -1335,7 +1339,7 @@ PyObject *py_unreal_engine_clipboard_copy(PyObject * self, PyObject * args)
 PyObject *py_unreal_engine_clipboard_paste(PyObject * self, PyObject * args)
 {
 	FString clipboard;
-#if ENGINE_MINOR_VERSION >= 18
+#if UEP_LEGACY_ENGINE_MINOR_VERSION >= 18
 	FPlatformApplicationMisc::ClipboardPaste(clipboard);
 #else
 	FGenericPlatformMisc::ClipboardPaste(clipboard);
