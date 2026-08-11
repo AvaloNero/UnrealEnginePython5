@@ -3,6 +3,46 @@
 This file records the UE5 port maintained in this repository. The historical
 UE4 project history remains available in Git.
 
+## [Unreleased] - 0.4.0 Lyra integration
+
+### Added
+
+- A disposable project-side `UEPLyraBridge` world subsystem that converts
+  Lyra's native Experience completion callback into a reflected dynamic event
+  and exposes read-only Game Feature, Enhanced Input, Ability System, authority
+  and net-mode snapshots.
+- A Python lifecycle probe with explicit callback unbinding, game-thread checks,
+  role-aware assertions, machine-readable results and orderly process shutdown.
+- Lyra source/readiness drivers that stage outside the reference project,
+  require UE5.8 and engine-bundled CPython 3.11, and distinguish source
+  compatibility from content-dependent acceptance.
+
+### Changed
+
+- `PythonEditor` project-tree ownership now uses `TObjectPtr`; a separate
+  non-reflected raw-pointer view feeds Slate. This satisfies Lyra's strict
+  UE5.8 native-pointer target policy without weakening it.
+
+### Validation
+
+- Clean source result `20260811-165230` built `LyraEditor` and all staged UEP
+  modules, loaded `UEPLyraBridge`, ran 12 Standalone game-world ticks on
+  CPython 3.11.8 and exited 0 with zero compiler, fatal and `Log*: Error`
+  diagnostics. Unreal Engine source remained unchanged.
+- Incremental regression result `20260811-172252` rebuilt the final
+  late-`GameState` lifecycle bridge through UBT and repeated the runtime gate
+  successfully.
+- Readiness result `20260811-163832` reports source ready but content blocked:
+  the local Lyra Git sample contains zero assets/maps and lacks all five
+  required GameFeatureData assets.
+
+### Not yet accepted
+
+- Version 0.4.0 is not released. Experience/Game Feature activation, real Lyra
+  pawn/input/GAS behavior, client/server replication, cook, package and
+  packaged runtime require a complete external Launcher/Marketplace Lyra
+  project and remain unclaimed.
+
 ## [0.3.0] - 2026-08-11
 
 ### Added

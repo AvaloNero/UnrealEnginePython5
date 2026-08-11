@@ -1,0 +1,36 @@
+{
+  "FileVersion": 3,
+  "Version": 1,
+  "VersionName": "0.4.0",
+  "FriendlyName": "UEP Lyra Bridge",
+  "Description": "Narrow, lifecycle-safe Lyra observation points for UnrealEnginePython",
+  "Category": "Scripting Languages",
+  "CanContainContent": false,
+  "EnabledByDefault": false,
+  "Installed": false,
+  "Modules": [
+    {
+      "Name": "UEPLyraBridge",
+      "Type": "Runtime",
+      "LoadingPhase": "PostDefault"
+    }
+  ],
+  "Plugins": [
+    {
+      "Name": "UnrealEnginePython",
+      "Enabled": true
+    },
+    {
+      "Name": "GameFeatures",
+      "Enabled": true
+    },
+    {
+      "Name": "GameplayAbilities",
+      "Enabled": true
+    },
+    {
+      "Name": "ModularGameplay",
+      "Enabled": true
+    }
+  ]
+}

@@ -76,8 +76,8 @@ the required `v26_clang-20.1.8-rockylinux8` SDK is not installed locally.
 
 ## 0.4.0 — Lyra integration
 
-Status: next; source integration can proceed, while content-dependent gates
-require a complete Launcher/Marketplace Lyra project.
+Status: in progress. The UE5.8 source/bridge gate passes; content-dependent
+acceptance is blocked on a complete Launcher/Marketplace Lyra project.
 
 - Start with a capability audit of Lyra's Game Feature plugins, modular gameplay,
   Enhanced Input, Gameplay Ability System, asset management and multiplayer
@@ -91,3 +91,18 @@ require a complete Launcher/Marketplace Lyra project.
   it is safe and maintainable.
 
 Lyra is intentionally not a 0.2.0 acceptance dependency.
+
+Source gate result `20260811-165230` built a clean disposable `LyraEditor`
+stage, linked `UEPLyraBridge`, started a game world with UEP-owned CPython
+3.11.8, captured a game-thread/Standalone snapshot and shut down with zero
+compiler, fatal or `Log*: Error` diagnostics. The readiness result
+`20260811-172340` reports `source_ready: true` and `content_ready: false`: the
+local Git sample contains zero `.uasset` and zero `.umap` files, including no
+project GameData/maps or GameFeatureData for its five feature plugins.
+Final lifecycle/UBT regression result `20260811-172252` also passed.
+
+0.4.0 is not complete and the main plugin version must not be bumped until a
+complete external Lyra project passes Experience activation, gameplay input and
+Ability System readiness, client/server authority and replication, cook,
+package and packaged-runtime gates. The reference project and Unreal Engine
+source must remain unchanged throughout those runs.

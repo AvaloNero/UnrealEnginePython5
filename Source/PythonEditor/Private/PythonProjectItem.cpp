@@ -17,12 +17,15 @@ void UPythonProjectItem::RescanChildren()
 		for (const auto& Child : Children)
 		{
 			if (!FPaths::FileExists(Child->Path)) {
-				DeleteChildren.Add(Child);
+				DeleteChildren.Add(Child.Get());
 			}
 		}
 		for (const auto& Child : DeleteChildren)
 		{
-			Children.Remove(Child);
+			Children.RemoveAll([Child](const TObjectPtr<UPythonProjectItem>& Item)
+			{
+				return Item.Get() == Child;
+			});
 		}
 		DeleteChildren.Empty();
 		FDirectoryScanner::AddDirectory(Path, FOnDirectoryScanned::CreateUObject(this, &UPythonProjectItem::HandleDirectoryScanned));

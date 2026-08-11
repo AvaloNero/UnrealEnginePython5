@@ -37,12 +37,14 @@ private:
 	bool IsTreeItemSelected(class UPythonProjectItem* Item) const;
 
 	void FolderNameChanged(UPythonProjectItem* Item);
+	void RefreshRootItems();
 
 	TSharedPtr<SWidget> MakePathViewContextMenu();
 	
 
 private:
 	class UPythonProject* PythonProject;
+	TArray<UPythonProjectItem*> RootTreeItems;
 
 	TSharedPtr<STreeView<class UPythonProjectItem*>> ProjectTree;
 };

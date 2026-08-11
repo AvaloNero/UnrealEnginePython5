@@ -54,6 +54,23 @@ Lyra work. Lifecycle/thread rules, platform status and release packaging are in
 [`docs/Platform_Support.md`](docs/Platform_Support.md), and
 [`Packaging/README.md`](Packaging/README.md).
 
+### 0.4.0 development status
+
+The Lyra source-integration gate is now automated on `dev/release-0.4.0` without
+changing the current 0.3.0 release claim. A disposable project-side bridge
+exposes read-only Experience, Game Feature, Enhanced Input, Ability System and
+network-role snapshots to Python while Lyra remains authoritative. A clean
+UE5.8 build/runtime result passes with UEP-owned CPython 3.11.8 and zero compiler,
+fatal or `Log*: Error` diagnostics. See
+[`docs/Lyra_Integration_0.4.0.md`](docs/Lyra_Integration_0.4.0.md) and
+[`Demos/UEPLyraIntegration/README.md`](Demos/UEPLyraIntegration/README.md).
+
+The local Git Lyra sample is source-only: it has no `.uasset` or `.umap` files.
+Consequently 0.4.0 is not released and no Experience, Game Feature activation,
+multiplayer, cook or packaged Lyra result is claimed. Run the readiness command
+in [`Validation/README.md`](Validation/README.md) against a complete external
+Launcher/Marketplace Lyra project before those gates.
+
 ### Known 0.3.0 boundaries
 
 Release-level runtime validation remains Win64-only. The local UE5.8 install
@@ -61,7 +78,8 @@ reports that the Linux `v26_clang-20.1.8-rockylinux8` SDK is unavailable, so
 Linux is not represented as tested. Dynamic generated classes require a process
 restart for redefinition, UObject access remains game-thread-only, and the Third
 Person parity contract covers keyboard/mouse rather than the template's mobile
-touch UI. Lyra and multiplayer authority/replication remain later milestones.
+touch UI. Lyra source integration is in progress; Lyra content, multiplayer
+authority and replication remain outside the 0.3.0 release contract.
 
 To use this source release, place the plugin under a UE 5.8 project's `Plugins`
 directory, regenerate project files, and build it with that UE 5.8 installation.

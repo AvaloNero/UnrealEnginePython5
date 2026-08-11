@@ -15,6 +15,7 @@ void SPythonProjectEditor::Construct(const FArguments& InArgs, UPythonProject* I
 {
 	check(InPythonProject);
 	PythonProject = InPythonProject;
+	RefreshRootItems();
 
 	ChildSlot
 		[
@@ -25,7 +26,7 @@ void SPythonProjectEditor::Construct(const FArguments& InArgs, UPythonProject* I
 			+ SOverlay::Slot()
 		[
 			SAssignNew(ProjectTree, STreeView<UPythonProjectItem*>)
-			.TreeItemsSource(&PythonProject->Children)
+			.TreeItemsSource(&RootTreeItems)
 		.OnGenerateRow(this, &SPythonProjectEditor::OnGenerateRow)
 		.OnGetChildren(this, &SPythonProjectEditor::OnGetChildren)
 		.OnMouseButtonDoubleClick(this, &SPythonProjectEditor::HandleMouseButtonDoubleClick)
@@ -48,7 +49,8 @@ void SPythonProjectEditor::Tick(const FGeometry& AllottedGeometry, const double 
 {
 	if (FDirectoryScanner::Tick())
 	{
-		ProjectTree->SetTreeItemsSource(&PythonProject->Children);
+		RefreshRootItems();
+		ProjectTree->SetTreeItemsSource(&RootTreeItems);
 	}
 
 	SCompoundWidget::Tick(AllottedGeometry, InCurrentTime, InDeltaTime);
@@ -84,7 +86,8 @@ TSharedRef<class ITableRow> SPythonProjectEditor::OnGenerateRow(UPythonProjectIt
 }
 UPythonProjectItem* SPythonProjectEditor::SelectByPath(FString path)
 {
-	ProjectTree->SetTreeItemsSource(&PythonProject->Children);
+	RefreshRootItems();
+	ProjectTree->SetTreeItemsSource(&RootTreeItems);
 	UPythonProjectItem* Item = PythonProject->GetItemByPath(path);
 	if (Item != NULL) {
 		ProjectTree->ClearSelection();
@@ -121,7 +124,20 @@ bool SPythonProjectEditor::IsTreeItemSelected(UPythonProjectItem* Item) const
 
 void SPythonProjectEditor::OnGetChildren(UPythonProjectItem* Item, TArray<UPythonProjectItem*>& OutChildItems)
 {
-	OutChildItems = Item->Children;
+	OutChildItems.Reset(Item->Children.Num());
+	for (const TObjectPtr<UPythonProjectItem>& Child : Item->Children)
+	{
+		OutChildItems.Add(Child.Get());
+	}
+}
+
+void SPythonProjectEditor::RefreshRootItems()
+{
+	RootTreeItems.Reset(PythonProject->Children.Num());
+	for (const TObjectPtr<UPythonProjectItem>& Child : PythonProject->Children)
+	{
+		RootTreeItems.Add(Child.Get());
+	}
 }
 
 EVisibility SPythonProjectEditor::GetThrobberVisibility() const

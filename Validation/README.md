@@ -138,3 +138,42 @@ The suite records, but does not fail for, these known limitations:
 
 Runtime exclusions stay visible in suite JSON; platform availability is kept in
 the separate readiness JSON until a real Linux lane result exists.
+
+## Lyra 0.4.0 source and content gates
+
+The Git Lyra sample under a source-engine checkout intentionally omits content.
+Check a candidate project without changing it:
+
+```powershell
+.\Validation\Test-UEP58LyraReadiness.ps1 `
+    -EngineRoot F:\UnrealEngine `
+    -LyraProject F:\UnrealEngine\Samples\Games\Lyra\Lyra.uproject
+```
+
+The report separates `source_ready` from `content_ready`. Add `-Strict` only
+when missing Marketplace content should fail the calling job. A content-ready
+project must contain the base GameData, front-end/editor maps, a gameplay map
+and root GameFeatureData assets for every Lyra Game Feature plugin.
+
+The source-only compatibility lane is independently runnable:
+
+```powershell
+.\Validation\Run-UEP58LyraSourceValidation.ps1 `
+    -EngineRoot F:\UnrealEngine `
+    -LyraProject F:\UnrealEngine\Samples\Games\Lyra\Lyra.uproject
+```
+
+It copies Lyra source/config/plugin code to the script-marked
+`.build/LyraValidation/Stage/Lyra`, injects the current UEP source and
+`UEPLyraBridge`, and disables content-backed Lyra startup only in that disposable
+stage. It then builds `LyraEditor` and runs `/Engine/Maps/Entry` with UEP-owned
+CPython 3.11. Passing proves compiler/UHT compatibility, module loading,
+game-thread bridge access and clean shutdown; it explicitly records
+`source_content_gate: not_claimed` and is not a substitute for real Lyra
+gameplay, networking or packaging.
+
+Current evidence is clean source result `20260811-165230`, final incremental
+source regression `20260811-172252` (both passed), and readiness result
+`20260811-172340` (`source_ready: true`, `content_ready: false`). Full 0.4.0
+acceptance remains blocked until a complete external Lyra project is available;
+do not copy Marketplace assets into the engine source checkout.

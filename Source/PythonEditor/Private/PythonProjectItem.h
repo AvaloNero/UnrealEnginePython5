@@ -46,7 +46,7 @@ public:
 	FString Path;
 
 	UPROPERTY(Transient)
-	TArray<UPythonProjectItem*> Children;
+	TArray<TObjectPtr<UPythonProjectItem>> Children;
 
 	/** Delegate handle for directory watcher */
 	FDelegateHandle OnDirectoryChangedHandle;

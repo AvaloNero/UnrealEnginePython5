@@ -109,3 +109,14 @@ The original integration sample remains available by omitting `-Variant` or
 passing `-Variant Overlay`. Its smoke test requires the six Python pickups and
 moving cube companion while the official Blueprint template continues to own
 the base character controls.
+
+## Lyra integration development
+
+`UEPLyraIntegration` is the 0.4.0 project-side bridge and Python observation
+probe. It is not a Lyra rewrite: Experience activation, Game Feature actions,
+Enhanced Input ownership, ability grants and replication stay in Lyra C++ and
+assets. The current automated lane proves the bridge against Lyra's UE5.8
+source while readiness automation rejects the content-free Git sample for real
+gameplay claims. See
+[`UEPLyraIntegration/README.md`](UEPLyraIntegration/README.md) and
+[`../docs/Lyra_Integration_0.4.0.md`](../docs/Lyra_Integration_0.4.0.md).
