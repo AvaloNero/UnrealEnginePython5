@@ -1,8 +1,7 @@
 # Lifecycle, reload, exceptions and threading
 
 This document records the current UnrealEnginePython runtime contract for UE
-5.8 and CPython 3.11. The released 0.3.0 baseline remains identified below;
-newer sections are explicitly marked as 0.4.0 development work.
+5.8 and CPython 3.11 as released in 0.4.0.
 
 ## Interpreter ownership
 
@@ -35,7 +34,7 @@ It does not make the surrounding operation thread-safe. A practical pattern is
 for workers to put plain Python data into a queue and for a game-thread ticker
 or gameplay callback to consume that queue.
 
-## Headless process exit (0.4.0 development)
+## Headless process exit (0.4.0)
 
 `UObject.quit_game()` needs a world with a local `PlayerController`, so it is
 not a reliable shutdown primitive for dedicated servers or commandlets. Use the
@@ -53,7 +52,7 @@ platform exit and should be reserved for an already-unrecoverable process.
 
 ## Delegate and input lifetime
 
-Binding a Python callable keeps it alive. In 0.3.0, explicit
+Binding a Python callable keeps it alive. Since 0.3.0, explicit
 `unbind_event(...)` and `remove_enhanced_action_binding(handle)` immediately
 clear the callable reference and unroot the bridge delegate. Owner destruction
 also clears tracked callables during the housekeeper pass.

@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import re
 import sys
+import time
 import traceback
 
 import unreal_engine as ue
@@ -16,6 +17,7 @@ REQUIRE_EXPERIENCE = "-UEPLyraRequireExperience"
 TIMEOUT_PREFIX = "-UEPLyraTimeoutSeconds="
 EXPECTED_CONTROLLERS_PREFIX = "-UEPLyraExpectedPlayerControllers="
 REQUIRED_FEATURES_PREFIX = "-UEPLyraRequiredFeatures="
+REQUIRED_REGISTERED_FEATURES_PREFIX = "-UEPLyraRequiredRegisteredFeatures="
 EXPECTED_EXPERIENCE_PREFIX = "-UEPLyraExpectedExperienceContains="
 HOLD_READY_PREFIX = "-UEPLyraHoldReadySeconds="
 READY_RELEASE_PREFIX = "-UEPLyraReadyReleaseFile="
@@ -70,6 +72,7 @@ def _field(value, name, default=None):
 class LyraRuntimeProbe:
     def __init__(self):
         self.elapsed = 0.0
+        self.started_at = time.monotonic()
         self.world_ticks = 0
         self.result_path = _command_line_value(RESULT_PREFIX)
         self.mode = _command_line_value(MODE_PREFIX, "source")
@@ -77,18 +80,31 @@ class LyraRuntimeProbe:
         self.timeout_seconds = max(10.0, _command_line_float(TIMEOUT_PREFIX, 180.0))
         self.expected_player_controllers = max(0, _command_line_int(EXPECTED_CONTROLLERS_PREFIX, 1))
         self.required_features = _command_line_list(REQUIRED_FEATURES_PREFIX)
+        self.required_registered_features = _command_line_list(
+            REQUIRED_REGISTERED_FEATURES_PREFIX
+        )
         self.expected_experience = _command_line_value(EXPECTED_EXPERIENCE_PREFIX, "")
         self.hold_ready_seconds = max(0.0, _command_line_float(HOLD_READY_PREFIX, 0.0))
         self.ready_release_path = _command_line_value(READY_RELEASE_PREFIX)
         self.ready_since = None
         self.ready_announced = False
+        self.ready_snapshot_report = None
         self.bridge_class = ue.find_class("UEPLyraWorldSubsystem")
         self.library = ue.find_class("UEPLyraBridgeLibrary").get_cdo()
         self.world = None
         self.bridge = None
         self.bound_callback = None
         self.experience_events = 0
+        self.last_snapshot_report = None
+        self.last_pending = None
+        self.last_pending_log_at = -30.0
         self.finished = False
+
+    def _wall_elapsed(self):
+        return time.monotonic() - self.started_at
+
+    def _timed_out(self):
+        return max(self.elapsed, self._wall_elapsed()) > self.timeout_seconds
 
     def _game_world(self):
         for world in ue.all_worlds():
@@ -183,6 +199,11 @@ class LyraRuntimeProbe:
             state = feature_states.get(feature.lower())
             if state is None or not state["active"]:
                 pending.append("active Game Feature {0}".format(feature))
+        registered_states = {"registered", "loaded", "active"}
+        for feature in self.required_registered_features:
+            state = feature_states.get(feature.lower())
+            if state is None or state["state"].lower() not in registered_states:
+                pending.append("registered Game Feature {0}".format(feature))
 
         if self.mode == "source":
             if report["net_mode"] != "Standalone":
@@ -242,7 +263,7 @@ class LyraRuntimeProbe:
         if pending:
             raise RuntimeError("Lyra readiness timed out waiting for: {0}".format(", ".join(pending)))
 
-    def _write_result(self, status, snapshot=None, error=None):
+    def _write_result(self, status, snapshot_report=None, error=None):
         if not self.result_path or self.finished:
             return
         self.finished = True
@@ -252,14 +273,19 @@ class LyraRuntimeProbe:
             "mode": self.mode,
             "python_version": ".".join(str(value) for value in sys.version_info[:3]),
             "elapsed_seconds": round(self.elapsed, 3),
+            "wall_elapsed_seconds": round(self._wall_elapsed(), 3),
             "world_ticks": self.world_ticks,
             "experience_events": self.experience_events,
             "required_features": self.required_features,
+            "required_registered_features": self.required_registered_features,
             "expected_experience_contains": self.expected_experience,
             "expected_player_controllers": self.expected_player_controllers,
             "hold_ready_seconds": self.hold_ready_seconds,
             "ready_release_gate": bool(self.ready_release_path),
-            "snapshot": self._snapshot_report(snapshot) if snapshot is not None else None,
+            "snapshot": snapshot_report,
+            "pending_requirements": (
+                self._pending_requirements(snapshot_report) if snapshot_report is not None else []
+            ),
             "error": error,
         }
         path = Path(self.result_path)
@@ -294,21 +320,43 @@ class LyraRuntimeProbe:
             self.elapsed += delta_seconds
             world = self._game_world()
             if not _is_valid(world) or not self._attach(world):
-                if self.result_path and self.elapsed > self.timeout_seconds:
+                if self.result_path and self._timed_out():
                     raise RuntimeError("Lyra game world/bridge was not ready before timeout")
                 return True
 
             self.world_ticks += 1
             snapshot = self.bridge.call_function("CaptureSnapshot")
             snapshot_report = self._snapshot_report(snapshot)
+            self.last_snapshot_report = snapshot_report
             minimum_ticks = 12 if self.mode == "source" else 30
             if self.world_ticks < minimum_ticks:
                 return True
+
+            # Network peers share a release gate. Once this process has proven
+            # every requirement, retain that exact snapshot so a faster peer
+            # cannot invalidate the already-observed result by disconnecting
+            # before this process sees the release file on its next tick.
+            if self.ready_snapshot_report is not None:
+                if not Path(self.ready_release_path).is_file():
+                    return True
+                self._assert_ready(self.ready_snapshot_report)
+                self._write_result("passed", snapshot_report=self.ready_snapshot_report)
+                self.shutdown_binding()
+                self._request_quit()
+                return False
+
             pending = self._pending_requirements(snapshot_report)
             if pending:
                 self.ready_since = None
                 self.ready_announced = False
-                if self.elapsed > self.timeout_seconds:
+                wall_elapsed = self._wall_elapsed()
+                if pending != self.last_pending or wall_elapsed - self.last_pending_log_at >= 30.0:
+                    ue.log(
+                        "UEP_LYRA_PENDING {0}: {1}".format(self.mode, ", ".join(pending))
+                    )
+                    self.last_pending = list(pending)
+                    self.last_pending_log_at = wall_elapsed
+                if self._timed_out():
                     self._assert_ready(snapshot_report)
                 return True
 
@@ -318,6 +366,8 @@ class LyraRuntimeProbe:
                 return True
 
             if self.ready_release_path:
+                self._assert_ready(snapshot_report)
+                self.ready_snapshot_report = snapshot_report
                 if not self.ready_announced:
                     ue.log("UEP_LYRA_REQUIREMENTS_READY {0}".format(self.mode))
                     self.ready_announced = True
@@ -325,14 +375,16 @@ class LyraRuntimeProbe:
                     return True
 
             self._assert_ready(snapshot_report)
-            self._write_result("passed", snapshot)
+            self._write_result("passed", snapshot_report=snapshot_report)
             self.shutdown_binding()
             self._request_quit()
             return False
         except Exception:
             details = traceback.format_exc()
             ue.log_error(details)
-            self._write_result("failed", error=details)
+            self._write_result(
+                "failed", snapshot_report=self.last_snapshot_report, error=details
+            )
             self.shutdown_binding()
             self._request_quit()
             return False

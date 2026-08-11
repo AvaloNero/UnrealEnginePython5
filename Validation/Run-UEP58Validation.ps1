@@ -232,6 +232,8 @@ $pluginHostSource = Join-Path $PSScriptRoot "UEP58PluginHost\UEP58PluginHost.upr
 $validationRoot = Join-Path $repoRoot ".build\Validation"
 $stageRoot = Join-Path $validationRoot "UEP58Host"
 $stageMarker = Join-Path $stageRoot ".uep-validation-stage"
+$packageRoot = Join-Path $validationRoot "Package"
+$packageMarker = Join-Path $packageRoot ".uep-validation-package"
 $runId = Get-Date -Format "yyyyMMdd-HHmmss"
 $resultRoot = Join-Path $validationRoot "Results\$runId"
 
@@ -435,8 +437,23 @@ try {
     }
 
     $packagedExecutable = $null
+    $packagedNetworkExecutable = $null
+    $packagedNetworkExecutableSha256 = $null
     if (!$SkipPackage) {
-        $packageRoot = Join-Path $resultRoot "Package"
+        # Windows Firewall identifies unpackaged programs by their complete
+        # executable path. Archive directly to a guarded fixed directory so
+        # every validation run uses the same application identity without an
+        # additional package-sized mirror copy.
+        Assert-PathIsUnder -Path $packageRoot -Parent $validationRoot
+        if (Test-Path -LiteralPath $packageRoot -PathType Container) {
+            if (!(Test-Path -LiteralPath $packageMarker -PathType Leaf)) {
+                throw "Refusing to clean an unmarked package directory: $packageRoot"
+            }
+            Remove-Item -LiteralPath $packageRoot -Recurse -Force
+        }
+        New-Item -ItemType Directory -Path $packageRoot -Force | Out-Null
+        Set-Content -LiteralPath $packageMarker -Value "Managed by Validation/Run-UEP58Validation.ps1" -Encoding utf8
+
         $packageLogRoot = Join-Path $resultRoot "package-uat"
         $packageLog = Join-Path $packageLogRoot "Log.txt"
         $packageArguments = @(
@@ -468,11 +485,16 @@ try {
         Assert-AutomationLog $packageLog
         $buildLogs.Add($packageLog)
 
-        $packagedExecutable = Get-ChildItem -LiteralPath $packageRoot -Filter "UEP58Host.exe" -File -Recurse |
-            Select-Object -First 1 -ExpandProperty FullName
-        if (!$packagedExecutable) {
-            throw "Packaged executable was not found under $packageRoot"
+        # Recreate the marker in case AutomationTool replaced the archive root.
+        Set-Content -LiteralPath $packageMarker -Value "Managed by Validation/Run-UEP58Validation.ps1" -Encoding utf8
+        $packagedExecutable = Join-Path $packageRoot "Windows\UEP58Host.exe"
+        $packagedNetworkExecutable = Join-Path $packageRoot "Windows\UEP58Host\Binaries\Win64\UEP58Host.exe"
+        foreach ($requiredExecutable in @($packagedExecutable, $packagedNetworkExecutable)) {
+            if (!(Test-Path -LiteralPath $requiredExecutable -PathType Leaf)) {
+                throw "Packaged executable was not found: $requiredExecutable"
+            }
         }
+        $packagedNetworkExecutableSha256 = (Get-FileHash -LiteralPath $packagedNetworkExecutable -Algorithm SHA256).Hash
 
         $packagedResultPath = Join-Path $resultRoot "packaged.json"
         $packagedLogPath = Join-Path $resultRoot "packaged.log"
@@ -502,7 +524,10 @@ try {
         engine = "$($engineVersion.MajorVersion).$($engineVersion.MinorVersion).$($engineVersion.PatchVersion)"
         configuration = $Configuration
         package_tested = !$SkipPackage
+        package_output_root = if ($SkipPackage) { $null } else { $packageRoot }
         packaged_executable = $packagedExecutable
+        packaged_network_executable = $packagedNetworkExecutable
+        packaged_network_executable_sha256 = $packagedNetworkExecutableSha256
         stage_root = $stageRoot
         result_root = $resultRoot
         build_logs = $buildLogs

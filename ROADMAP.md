@@ -76,8 +76,7 @@ the required `v26_clang-20.1.8-rockylinux8` SDK is not installed locally.
 
 ## 0.4.0 — Lyra integration
 
-Status: in progress. The UE5.8 source/bridge gate passes; content-dependent
-acceptance is blocked on a complete Launcher/Marketplace Lyra project.
+Status: complete.
 
 - Start with a capability audit of Lyra's Game Feature plugins, modular gameplay,
   Enhanced Input, Gameplay Ability System, asset management and multiplayer
@@ -95,21 +94,28 @@ Lyra is intentionally not a 0.2.0 acceptance dependency.
 Source gate result `20260811-165230` built a clean disposable `LyraEditor`
 stage, linked `UEPLyraBridge`, started a game world with UEP-owned CPython
 3.11.8, captured a game-thread/Standalone snapshot and shut down with zero
-compiler, fatal or `Log*: Error` diagnostics. The readiness result
-`20260811-184203` reports `source_ready: true` and `content_ready: false`: the
-local Git sample contains zero `.uasset` and zero `.umap` files, including no
-project GameData/maps or GameFeatureData for its five feature plugins.
+compiler, fatal or `Log*: Error` diagnostics. Historical readiness result
+`20260811-184203` correctly reports the local Git sample as source-ready but
+content-blocked. Complete-project readiness result `20260812-005352`, followed
+by full-driver Readiness result `20260812-013646`, passes UE 5.8.0, CPython
+3.11.8, all five Game Features and every critical Unreal package against
+`F:\LyraStarterGame\LyraStarterGame.uproject`.
 Final source regression `20260811-183357` also passed both Standalone and a
-real UDP-listening dedicated-server graceful-exit gate; full generic regression
-`20260811-184425` passed 70/70 checks including cook, package and packaged
-CPython 3.11.8. `Run-UEP58LyraValidation.ps1` now encodes
+real UDP-listening dedicated-server graceful-exit gate. Final generic regression
+`20260812-043408` passed 70/70 checks including Editor/Slate, a full Development
+BuildCookRun and packaged CPython 3.11.8. `Run-UEP58LyraValidation.ps1` now encodes
 the complete Standalone, explicitly synchronized dedicated-server/client and
 packaged-runtime contract. Negative result `20260811-184148` rejected the
-content-free sample before staging; the full lane
-has not passed because the external content project is still unavailable.
+content-free sample before staging. Pre-release `All` result
+`20260812-025232` then passed readiness, Editor build, Standalone gameplay,
+dedicated-server/client authority and replication, and a cold-DDC full Win64
+BuildCookRun. Its executable-layout guard exposed and stopped on one incorrect
+internal-path assumption after UAT had archived successfully. The corrected,
+bit-identical package passed the full gameplay and lifecycle contract in strict
+result `20260812-042711-packaged-resume` with CPython 3.11.8 and zero fatal or
+`Log*: Error` diagnostics.
 
-0.4.0 is not complete and the main plugin version must not be bumped until a
-complete external Lyra project passes Experience activation, gameplay input and
-Ability System readiness, client/server authority and replication, cook,
-package and packaged-runtime gates. The reference project and Unreal Engine
-source must remain unchanged throughout those runs.
+The completed boundary keeps Game Feature activation, ability grants, input
+mappings and replicated authority-sensitive state native to Lyra. Python
+observes those states through the disposable bridge. The reference project and
+Unreal Engine source remain unchanged throughout validation.

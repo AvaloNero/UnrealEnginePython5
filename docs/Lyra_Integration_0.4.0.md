@@ -3,14 +3,23 @@
 ## Current status
 
 The source integration is implemented and validated against Unreal Engine
-5.8.0 with the engine-bundled CPython 3.11.8. The local project at
-`F:\UnrealEngine\Samples\Games\Lyra\Lyra.uproject` is Epic's Git source sample,
-not a complete Launcher project: it contains zero `.uasset` and zero `.umap`
-files. Version 0.4.0 therefore remains in progress.
+5.8.0 with the engine-bundled CPython 3.11.8. The complete external project at
+`F:\LyraStarterGame\LyraStarterGame.uproject` passes strict source/content
+readiness, real Standalone gameplay, dedicated-server/client authority and
+replication, Win64 cook/package and packaged gameplay. Version 0.4.0 keeps Lyra
+authoritative and exposes only the narrow observations described below.
 
 `UEPLyraBridge` lives with this repository's demo/validation material and is
 copied into a disposable project under `.build`. Neither Unreal Engine source
-nor the Lyra reference tree is edited.
+nor the Lyra reference tree is edited. The disposable descriptor disables
+desktop-only `AndroidFileServer`. After the complete Editor target compiles, the
+runtime/package lanes also disable test-only `ShooterTests` and `RuntimeTests`
+so gameplay evidence covers production features. ShooterTests content remains
+staged and readiness-validated; production Lyra gameplay features remain
+enabled. Runtime launches use deterministic English culture because UE5.8's
+startup Core smoke tests compare source-language UnifiedError strings and fail
+spuriously after Chinese localization. Fatal/assert/`Log*: Error` filtering
+remains strict.
 
 ## Capability audit
 
@@ -72,7 +81,8 @@ The source-only stage intentionally uses `/Engine/Maps/Entry`, the base Asset
 Manager and no Lyra content-backed Game Feature plugins. This is a compatibility
 test, not gameplay evidence.
 
-`Validation/Test-UEP58LyraReadiness.ps1` result `20260811-184203` reports:
+Historical `Validation/Test-UEP58LyraReadiness.ps1` result `20260811-184203`
+reports the local Git source sample as correctly blocked:
 
 - UE 5.8.0 and CPython 3.11.8 ready;
 - Lyra project/targets/config and five explicit Registered Game Feature plugin
@@ -81,25 +91,31 @@ test, not gameplay evidence.
 - missing base GameData, front-end/editor/gameplay maps and all five root
   GameFeatureData assets.
 
-`Validation/Run-UEP58LyraValidation.ps1` encodes the remaining acceptance as a
-single `All` lane: strict readiness, isolated full-project staging, clean Editor
-build, real Standalone Experience/Game Feature/pawn/input/GAS readiness,
-dedicated-server/client authority and replicated player lifecycle with an
-explicit two-role ready/release handshake, Win64 cook and package, and packaged
-CPython gameplay. Negative result
-`20260811-184148` rejected the local source sample before staging with all 11
-content blockers preserved in JSON. This proves the guard, not the remaining
-runtime gates.
+Complete-project result `20260812-005352` and full-driver Readiness result
+`20260812-013646` now report `status: ready` for UE 5.8.0, CPython 3.11.8, all
+five explicit Registered Game Feature plugins, 2,837 base-project assets, three
+base-project maps and every critical Unreal package. The Game Feature content
+adds another 5,746 assets and 17 maps.
 
-## Remaining 0.4.0 acceptance gates
+`Validation/Run-UEP58LyraValidation.ps1` encodes release acceptance as a single
+`All` lane: strict readiness, isolated full-project staging, clean Editor build,
+real Standalone Experience/Game Feature/pawn/input/GAS readiness, dedicated-
+server/client authority and replicated player lifecycle with an explicit two-
+role ready/release handshake, Win64 cook and package, and packaged CPython
+gameplay. Negative result
+`20260811-184148` rejected the local source sample before staging with all 11
+content blockers preserved in JSON.
+
+## 0.4.0 acceptance contract and evidence
 
 Use a complete Launcher/Marketplace Lyra project outside the Unreal Engine
 source checkout. Do not copy Marketplace content into `F:\UnrealEngine`.
-0.4.0 can be marked complete only after one named commit passes all of these:
+The complete external project is available. The release contract requires:
 
 1. strict readiness with real base and Game Feature content;
 2. clean Editor build/startup with the reference content unchanged;
-3. real Experience completion and required Game Features reaching Active;
+3. real Experience completion, `ShooterCore` Active and content-only
+   `ShooterMaps` at least Registered;
 4. a local pawn with Lyra Enhanced Input and ASC readiness;
 5. separate server/client results proving correct net modes, authority and
    replicated player lifecycle;
@@ -107,5 +123,12 @@ source checkout. Do not copy Marketplace content into `F:\UnrealEngine`.
 7. orderly shutdown with no compiler, fatal/assert or unexpected error
    diagnostics.
 
-Only after those gates pass should the main plugin descriptor and release
-documentation change from 0.3.0 to 0.4.0.
+Readiness result `20260812-013646` passed item 1. Pre-release `All` result
+`20260812-025232` passed items 1–5 and completed the full Win64 BuildCookRun
+with UAT ExitCode 0. Its guarded post-archive check then exposed an incorrect
+assumed internal executable directory before packaged launch. After correcting
+the driver to use UAT's real `LyraStarterGame` layout plus a hash-verified stable
+firewall identity, strict packaged result `20260812-042711-packaged-resume`
+passed items 6–7 on the same artifact: CPython 3.11.8, the expected Experience,
+Pawn/Input/ASC, active/registered Game Feature states, orderly shutdown and zero
+fatal/assert or `Log*: Error` diagnostics.

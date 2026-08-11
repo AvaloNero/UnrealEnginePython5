@@ -7,11 +7,12 @@ param(
     [string]$Mode = "All",
     [string]$GameplayMap = "/ShooterMaps/Maps/L_Expanse",
     [string]$ExpectedExperience = "B_ShooterGame_Elimination",
-    [string[]]$RequiredGameFeatures = @("ShooterCore", "ShooterMaps"),
+    [string[]]$RequiredActiveGameFeatures = @("ShooterCore"),
+    [string[]]$RequiredRegisteredGameFeatures = @("ShooterMaps"),
     [ValidateRange(1024, 65535)]
     [int]$ServerPort = 7788,
     [ValidateRange(1, 64)]
-    [int]$MaxParallelActions = 4,
+    [int]$MaxParallelActions = 2,
     [ValidateRange(30, 600)]
     [int]$RuntimeTimeoutSeconds = 180,
     [switch]$Incremental
@@ -49,7 +50,8 @@ function Copy-FilteredTree {
     param(
         [Parameter(Mandatory = $true)][string]$Source,
         [Parameter(Mandatory = $true)][string]$Destination,
-        [string[]]$ExcludedSegments = @()
+        [string[]]$ExcludedSegments = @(),
+        [switch]$PruneDestination
     )
     $sourcePath = Get-FullPath $Source
     $destinationPath = Get-FullPath $Destination
@@ -61,16 +63,38 @@ function Copy-FilteredTree {
     $enumerationOptions.RecurseSubdirectories = $true
     $enumerationOptions.IgnoreInaccessible = $false
     $enumerationOptions.AttributesToSkip = [System.IO.FileAttributes]::ReparsePoint
+    $expectedPaths = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
     foreach ($file in [System.IO.Directory]::EnumerateFiles($sourcePath, "*", $enumerationOptions)) {
         $relativePath = [System.IO.Path]::GetRelativePath($sourcePath, $file)
         $segments = @($relativePath -split "[\\/]")
         if (@($segments | Where-Object { $ExcludedSegments -contains $_ }).Count -gt 0) {
             continue
         }
+        $expectedPaths.Add($relativePath) | Out-Null
         $targetPath = Join-Path $destinationPath $relativePath
+        if ([System.IO.File]::Exists($targetPath)) {
+            $sourceInfo = [System.IO.FileInfo]::new($file)
+            $targetInfo = [System.IO.FileInfo]::new($targetPath)
+            if ($sourceInfo.Length -eq $targetInfo.Length -and
+                $sourceInfo.LastWriteTimeUtc -eq $targetInfo.LastWriteTimeUtc) {
+                continue
+            }
+        }
         $targetDirectory = Split-Path -Parent $targetPath
         New-Item -ItemType Directory -Path $targetDirectory -Force | Out-Null
         Copy-Item -LiteralPath $file -Destination $targetPath -Force
+    }
+    if ($PruneDestination) {
+        foreach ($file in @([System.IO.Directory]::EnumerateFiles($destinationPath, "*", $enumerationOptions))) {
+            $relativePath = [System.IO.Path]::GetRelativePath($destinationPath, $file)
+            $segments = @($relativePath -split "[\\/]")
+            if (@($segments | Where-Object { $ExcludedSegments -contains $_ }).Count -gt 0) {
+                continue
+            }
+            if (!$expectedPaths.Contains($relativePath)) {
+                Remove-Item -LiteralPath $file -Force
+            }
+        }
     }
 }
 
@@ -295,7 +319,8 @@ function Assert-LyraRuntime {
         [Parameter(Mandatory = $true)][string]$ResultPath,
         [Parameter(Mandatory = $true)][string]$UnrealLogPath,
         [Parameter(Mandatory = $true)][string]$ExpectedMode,
-        [Parameter(Mandatory = $true)][string[]]$ExpectedFeatures,
+        [Parameter(Mandatory = $true)][string[]]$ExpectedActiveFeatures,
+        [Parameter(Mandatory = $true)][string[]]$ExpectedRegisteredFeatures,
         [string]$ExpectedExperienceContains = ""
     )
     if (!(Test-Path -LiteralPath $ResultPath -PathType Leaf)) {
@@ -315,12 +340,20 @@ function Assert-LyraRuntime {
         ([string]$report.snapshot.experience).IndexOf($ExpectedExperienceContains, [System.StringComparison]::OrdinalIgnoreCase) -lt 0) {
         throw "Lyra $ExpectedMode report used unexpected Experience '$($report.snapshot.experience)': $ResultPath"
     }
-    foreach ($feature in $ExpectedFeatures) {
+    foreach ($feature in $ExpectedActiveFeatures) {
         $active = @($report.snapshot.game_features | Where-Object {
             $_.name -eq $feature -and $_.active
         })
         if ($active.Count -ne 1) {
             throw "Lyra $ExpectedMode report lacks active Game Feature '$feature': $ResultPath"
+        }
+    }
+    foreach ($feature in $ExpectedRegisteredFeatures) {
+        $registered = @($report.snapshot.game_features | Where-Object {
+            $_.name -eq $feature -and @("Registered", "Loaded", "Active") -contains ([string]$_.state)
+        })
+        if ($registered.Count -ne 1) {
+            throw "Lyra $ExpectedMode report lacks registered Game Feature '$feature': $ResultPath"
         }
     }
 
@@ -352,7 +385,8 @@ function Get-LyraRuntimeArguments {
         [Parameter(Mandatory = $true)][string]$ResultPath,
         [Parameter(Mandatory = $true)][string]$UnrealLogPath,
         [Parameter(Mandatory = $true)][int]$ExpectedControllers,
-        [Parameter(Mandatory = $true)][string[]]$Features,
+        [Parameter(Mandatory = $true)][string[]]$ActiveFeatures,
+        [Parameter(Mandatory = $true)][string[]]$RegisteredFeatures,
         [Parameter(Mandatory = $true)][int]$TimeoutSeconds,
         [string]$Experience = "",
         [int]$HoldReadySeconds = 0,
@@ -366,6 +400,10 @@ function Get-LyraRuntimeArguments {
         "-NoSound",
         "-NoSplash",
         "-NoLoadingScreen",
+        # UE 5.8 runs Core smoke tests during editor startup. Pinning the
+        # validation culture keeps their source-language string assertions
+        # deterministic on localized Windows installations.
+        "-culture=en",
         "-UTF8Output",
         "-DisablePython",
         "-DisablePlugins=AndroidFileServer",
@@ -377,7 +415,8 @@ function Get-LyraRuntimeArguments {
         "-UEPLyraRequireExperience",
         "-UEPLyraTimeoutSeconds=$TimeoutSeconds",
         "-UEPLyraExpectedPlayerControllers=$ExpectedControllers",
-        "-UEPLyraRequiredFeatures=$($Features -join '+')",
+        "-UEPLyraRequiredFeatures=$($ActiveFeatures -join '+')",
+        "-UEPLyraRequiredRegisteredFeatures=$($RegisteredFeatures -join '+')",
         "-UEPLyraHoldReadySeconds=$HoldReadySeconds"
     )) {
         $arguments.Add($argument)
@@ -416,6 +455,8 @@ $runId = Get-Date -Format "yyyyMMdd-HHmmss"
 $resultRoot = Join-Path $outputRootPath "Results\$runId"
 $stageRoot = Join-Path $outputRootPath "Stage\Lyra"
 $stageMarkerPath = Join-Path $stageRoot ".uep-lyra-full-stage.json"
+$packageRoot = Join-Path $outputRootPath "Package"
+$packageMarkerPath = Join-Path $packageRoot ".uep-lyra-full-package.json"
 New-Item -ItemType Directory -Path $resultRoot -Force | Out-Null
 
 $summary = [ordered]@{
@@ -427,6 +468,8 @@ $summary = [ordered]@{
     python = $null
     lyra_project = $lyraProjectPath
     stage_project = $null
+    stage_runtime_disabled_plugins = @()
+    package_output_root = if ($Mode -in @("Package", "All")) { $packageRoot } else { $null }
     readiness = $null
     editor_build = $null
     standalone = $null
@@ -536,19 +579,21 @@ try {
         $stagedBridge = Join-Path $stageRoot "Plugins\UEPLyraBridge"
         foreach ($ownedPluginPath in @($stagedUEP, $stagedBridge)) {
             Assert-PathIsUnder -Path $ownedPluginPath -Parent $stageRoot
-            if (Test-Path -LiteralPath $ownedPluginPath -PathType Container) {
+            # Incremental runs retain only owned Binaries/Intermediate outputs;
+            # source/config files are synchronized and pruned below.
+            if (!$Incremental -and (Test-Path -LiteralPath $ownedPluginPath -PathType Container)) {
                 Remove-Item -LiteralPath $ownedPluginPath -Recurse -Force
             }
         }
         foreach ($directory in @("Config", "Resources", "Source")) {
             Copy-FilteredTree -Source (Join-Path $repoRoot $directory) -Destination (Join-Path $stagedUEP $directory) -ExcludedSegments @(
                 "Binaries", "Intermediate", "__pycache__", ".build", ".git", ".codegraph"
-            )
+            ) -PruneDestination
         }
         Copy-Item -LiteralPath (Join-Path $repoRoot "UnrealEnginePython.uplugin") -Destination (Join-Path $stagedUEP "UnrealEnginePython.uplugin") -Force
         Copy-FilteredTree -Source (Join-Path $repoRoot "Demos\UEPLyraIntegration\Plugins\UEPLyraBridge") -Destination $stagedBridge -ExcludedSegments @(
             "Binaries", "Intermediate", "__pycache__"
-        )
+        ) -PruneDestination
         Copy-FilteredTree -Source (Join-Path $repoRoot "Demos\UEPLyraIntegration\Overlay\Content\Scripts") -Destination (Join-Path $stageRoot "Content\Scripts") -ExcludedSegments @("__pycache__")
 
         $stageProject = Join-Path $stageRoot ([System.IO.Path]::GetFileName($lyraProjectPath))
@@ -563,6 +608,8 @@ try {
                 $pluginEntries += [pscustomobject]@{ Name = $pluginName; Enabled = $true }
             }
         }
+        # AndroidFileServer is unrelated on this desktop host and can trigger a
+        # separate Windows firewall prompt. This change is staged only.
         $androidFileServer = $pluginEntries | Where-Object Name -eq "AndroidFileServer" | Select-Object -First 1
         if ($androidFileServer) {
             $androidFileServer.Enabled = $false
@@ -598,14 +645,33 @@ try {
         $summary.editor_build = Invoke-LoggedProcess -FilePath $dotnetPath -ArgumentList $buildArguments -WorkingDirectory $engineRootPath -LogPath $buildLog -Label "LyraEditor full-content build" -TimeoutSeconds 3600
         Assert-BuildLog $buildLog
 
+        # Preserve compile coverage for the complete reference-project target,
+        # then disable only test runners for gameplay/package execution. The
+        # ShooterTests -> AsyncMessageSystemTests dependency re-enables
+        # RuntimeTests and its intentional Log*:Error cases unless both roots
+        # are disabled. Reference project files remain untouched.
+        $runtimeDisabledPlugins = @("RuntimeTests", "ShooterTests")
+        foreach ($pluginName in $runtimeDisabledPlugins) {
+            $entry = $pluginEntries | Where-Object Name -eq $pluginName | Select-Object -First 1
+            if ($entry) {
+                $entry.Enabled = $false
+            }
+            else {
+                $pluginEntries += [pscustomobject]@{ Name = $pluginName; Enabled = $false }
+            }
+        }
+        $projectDescriptor.Plugins = $pluginEntries
+        $projectDescriptor | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $stageProject -Encoding utf8
+        $summary.stage_runtime_disabled_plugins = @("AndroidFileServer") + $runtimeDisabledPlugins
+
         if ($Mode -in @("Standalone", "All")) {
             $standaloneResult = Join-Path $resultRoot "standalone.json"
             $standaloneStdout = Join-Path $resultRoot "standalone-stdout.log"
             $standaloneLog = Join-Path $resultRoot "standalone.log"
             $standaloneArguments = @($stageProject, $GameplayMap, "-game") +
-                (Get-LyraRuntimeArguments -TargetMode "standalone" -ResultPath $standaloneResult -UnrealLogPath $standaloneLog -ExpectedControllers 1 -Features $RequiredGameFeatures -TimeoutSeconds $RuntimeTimeoutSeconds -Experience $ExpectedExperience)
+                (Get-LyraRuntimeArguments -TargetMode "standalone" -ResultPath $standaloneResult -UnrealLogPath $standaloneLog -ExpectedControllers 1 -ActiveFeatures $RequiredActiveGameFeatures -RegisteredFeatures $RequiredRegisteredGameFeatures -TimeoutSeconds $RuntimeTimeoutSeconds -Experience $ExpectedExperience)
             $standaloneProcess = Invoke-LoggedProcess -FilePath $editorPath -ArgumentList $standaloneArguments -WorkingDirectory $stageRoot -LogPath $standaloneStdout -Label "Lyra standalone gameplay" -TimeoutSeconds ($RuntimeTimeoutSeconds + 120)
-            $standaloneReport = Assert-LyraRuntime -ResultPath $standaloneResult -UnrealLogPath $standaloneLog -ExpectedMode "standalone" -ExpectedFeatures $RequiredGameFeatures -ExpectedExperienceContains $ExpectedExperience
+            $standaloneReport = Assert-LyraRuntime -ResultPath $standaloneResult -UnrealLogPath $standaloneLog -ExpectedMode "standalone" -ExpectedActiveFeatures $RequiredActiveGameFeatures -ExpectedRegisteredFeatures $RequiredRegisteredGameFeatures -ExpectedExperienceContains $ExpectedExperience
             $summary.standalone = [ordered]@{ process = $standaloneProcess; report = $standaloneResult; unreal_log = $standaloneLog; snapshot = $standaloneReport.snapshot }
         }
 
@@ -623,9 +689,9 @@ try {
             $clientLog = Join-Path $resultRoot "client.log"
             $networkReleaseFile = Join-Path $resultRoot "network-ready.release"
             $serverArguments = @($stageProject, $GameplayMap, "-server", "-port=$ServerPort", "-Multiprocess") +
-                (Get-LyraRuntimeArguments -TargetMode "server" -ResultPath $serverResult -UnrealLogPath $serverLog -ExpectedControllers 1 -Features $RequiredGameFeatures -TimeoutSeconds $RuntimeTimeoutSeconds -Experience $ExpectedExperience -ReadyReleaseFile $networkReleaseFile)
+                (Get-LyraRuntimeArguments -TargetMode "server" -ResultPath $serverResult -UnrealLogPath $serverLog -ExpectedControllers 1 -ActiveFeatures $RequiredActiveGameFeatures -RegisteredFeatures $RequiredRegisteredGameFeatures -TimeoutSeconds $RuntimeTimeoutSeconds -Experience $ExpectedExperience -ReadyReleaseFile $networkReleaseFile)
             $clientArguments = @($stageProject, "127.0.0.1:$ServerPort", "-game", "-Multiprocess") +
-                (Get-LyraRuntimeArguments -TargetMode "client" -ResultPath $clientResult -UnrealLogPath $clientLog -ExpectedControllers 1 -Features $RequiredGameFeatures -TimeoutSeconds $RuntimeTimeoutSeconds -Experience $ExpectedExperience -ReadyReleaseFile $networkReleaseFile)
+                (Get-LyraRuntimeArguments -TargetMode "client" -ResultPath $clientResult -UnrealLogPath $clientLog -ExpectedControllers 1 -ActiveFeatures $RequiredActiveGameFeatures -RegisteredFeatures $RequiredRegisteredGameFeatures -TimeoutSeconds $RuntimeTimeoutSeconds -Experience $ExpectedExperience -ReadyReleaseFile $networkReleaseFile)
             $serverHandle = $null
             $clientHandle = $null
             try {
@@ -643,8 +709,8 @@ try {
                 Stop-LoggedProcess -Handle $clientHandle
                 Stop-LoggedProcess -Handle $serverHandle
             }
-            $clientReport = Assert-LyraRuntime -ResultPath $clientResult -UnrealLogPath $clientLog -ExpectedMode "client" -ExpectedFeatures $RequiredGameFeatures -ExpectedExperienceContains $ExpectedExperience
-            $serverReport = Assert-LyraRuntime -ResultPath $serverResult -UnrealLogPath $serverLog -ExpectedMode "server" -ExpectedFeatures $RequiredGameFeatures -ExpectedExperienceContains $ExpectedExperience
+            $clientReport = Assert-LyraRuntime -ResultPath $clientResult -UnrealLogPath $clientLog -ExpectedMode "client" -ExpectedActiveFeatures $RequiredActiveGameFeatures -ExpectedRegisteredFeatures $RequiredRegisteredGameFeatures -ExpectedExperienceContains $ExpectedExperience
+            $serverReport = Assert-LyraRuntime -ResultPath $serverResult -UnrealLogPath $serverLog -ExpectedMode "server" -ExpectedActiveFeatures $RequiredActiveGameFeatures -ExpectedRegisteredFeatures $RequiredRegisteredGameFeatures -ExpectedExperienceContains $ExpectedExperience
             $summary.network = [ordered]@{
                 port = $ServerPort
                 release_signal = $networkReleaseFile
@@ -654,7 +720,24 @@ try {
         }
 
         if ($Mode -in @("Package", "All")) {
-            $packageRoot = Join-Path $resultRoot "Package"
+            # Windows Firewall identifies unpackaged programs by their complete
+            # executable path. Archive directly to a guarded fixed directory so
+            # every validation run uses the same application identity without an
+            # additional package-sized mirror copy.
+            Assert-PathIsUnder -Path $packageRoot -Parent $outputRootPath
+            if (Test-Path -LiteralPath $packageRoot -PathType Container) {
+                if (!(Test-Path -LiteralPath $packageMarkerPath -PathType Leaf)) {
+                    throw "Refusing to clean an unmarked Lyra package directory: $packageRoot"
+                }
+                Remove-Item -LiteralPath $packageRoot -Recurse -Force
+            }
+            New-Item -ItemType Directory -Path $packageRoot -Force | Out-Null
+            [ordered]@{
+                schema_version = 1
+                purpose = "UEP Lyra full-content disposable package"
+                source = $lyraProjectPath
+            } | ConvertTo-Json | Set-Content -LiteralPath $packageMarkerPath -Encoding utf8
+
             $packageLogRoot = Join-Path $resultRoot "package-uat"
             $packageLog = Join-Path $packageLogRoot "Log.txt"
             New-Item -ItemType Directory -Path $packageLogRoot -Force | Out-Null
@@ -669,6 +752,7 @@ try {
                 "-platform=Win64",
                 "-clientconfig=Development",
                 "-target=LyraGame",
+                "-ubtargs=-NoUBA -MaxParallelActions=$MaxParallelActions",
                 "-build",
                 "-SkipBuildEditor",
                 "-cook",
@@ -683,22 +767,57 @@ try {
             $packageEnvironment = @{ uebp_LogFolder = $packageLogRoot; uebp_FinalLogFolder = $packageLogRoot }
             $packageProcess = Invoke-LoggedProcess -FilePath $dotnetPath -ArgumentList $packageArguments -WorkingDirectory $engineRootPath -LogPath (Join-Path $resultRoot "package-stdout.log") -Label "Lyra cook and package" -TimeoutSeconds 7200 -EnvironmentVariables $packageEnvironment
             Assert-AutomationLog $packageLog
-            $packagedExecutable = Get-ChildItem -LiteralPath $packageRoot -Filter "LyraGame.exe" -File -Recurse |
-                Select-Object -First 1 -ExpandProperty FullName
-            if (!$packagedExecutable) {
-                throw "Packaged LyraGame executable was not found under $packageRoot"
+
+            # Recreate the marker in case AutomationTool replaced the archive root.
+            [ordered]@{
+                schema_version = 1
+                purpose = "UEP Lyra full-content disposable package"
+                source = $lyraProjectPath
+            } | ConvertTo-Json | Set-Content -LiteralPath $packageMarkerPath -Encoding utf8
+            $packagedExecutable = Join-Path $packageRoot "Windows\LyraGame.exe"
+            $packagedInternalExecutable = Join-Path $packageRoot "Windows\LyraStarterGame\Binaries\Win64\LyraGame.exe"
+            foreach ($requiredExecutable in @($packagedExecutable, $packagedInternalExecutable)) {
+                if (!(Test-Path -LiteralPath $requiredExecutable -PathType Leaf)) {
+                    throw "Packaged LyraGame executable was not found: $requiredExecutable"
+                }
+            }
+
+            # Lyra archives its internal target under the project directory,
+            # while Windows Firewall keys unpackaged applications by the exact
+            # executable path. Copy the complete project-binary tree to a stable
+            # validation-only alias so one preconfigured Block rule covers
+            # every run without mirroring Content/Paks or changing the package
+            # payload being tested. Preserve nested D3D12/DML runtime files.
+            $packagedNetworkDirectory = Join-Path $packageRoot "Windows\LyraGame\Binaries\Win64"
+            Copy-FilteredTree -Source (Split-Path -Parent $packagedInternalExecutable) -Destination $packagedNetworkDirectory -PruneDestination
+            $packagedNetworkExecutable = Join-Path $packagedNetworkDirectory "LyraGame.exe"
+            if (!(Test-Path -LiteralPath $packagedNetworkExecutable -PathType Leaf)) {
+                throw "Stable packaged LyraGame validation executable was not created: $packagedNetworkExecutable"
+            }
+            $packagedInternalExecutableSha256 = (Get-FileHash -LiteralPath $packagedInternalExecutable -Algorithm SHA256).Hash
+            $packagedNetworkExecutableSha256 = (Get-FileHash -LiteralPath $packagedNetworkExecutable -Algorithm SHA256).Hash
+            if ($packagedNetworkExecutableSha256 -ne $packagedInternalExecutableSha256) {
+                throw "Stable packaged LyraGame validation executable does not match the archived internal executable"
             }
             $packagedResult = Join-Path $resultRoot "packaged.json"
             $packagedStdout = Join-Path $resultRoot "packaged-stdout.log"
             $packagedLog = Join-Path $resultRoot "packaged.log"
-            $packagedArguments = @($GameplayMap) +
-                (Get-LyraRuntimeArguments -TargetMode "packaged" -ResultPath $packagedResult -UnrealLogPath $packagedLog -ExpectedControllers 1 -Features $RequiredGameFeatures -TimeoutSeconds $RuntimeTimeoutSeconds -Experience $ExpectedExperience)
-            $packagedRuntime = Invoke-LoggedProcess -FilePath $packagedExecutable -ArgumentList $packagedArguments -WorkingDirectory (Split-Path -Parent $packagedExecutable) -LogPath $packagedStdout -Label "Packaged Lyra gameplay" -TimeoutSeconds ($RuntimeTimeoutSeconds + 120)
-            $packagedReport = Assert-LyraRuntime -ResultPath $packagedResult -UnrealLogPath $packagedLog -ExpectedMode "packaged" -ExpectedFeatures $RequiredGameFeatures -ExpectedExperienceContains $ExpectedExperience
+            $packagedArguments = @(
+                "-basedir=$(Split-Path -Parent $packagedInternalExecutable)",
+                $GameplayMap
+            ) +
+                (Get-LyraRuntimeArguments -TargetMode "packaged" -ResultPath $packagedResult -UnrealLogPath $packagedLog -ExpectedControllers 1 -ActiveFeatures $RequiredActiveGameFeatures -RegisteredFeatures $RequiredRegisteredGameFeatures -TimeoutSeconds $RuntimeTimeoutSeconds -Experience $ExpectedExperience)
+            $packagedRuntime = Invoke-LoggedProcess -FilePath $packagedNetworkExecutable -ArgumentList $packagedArguments -WorkingDirectory $packagedNetworkDirectory -LogPath $packagedStdout -Label "Packaged Lyra gameplay" -TimeoutSeconds ($RuntimeTimeoutSeconds + 120)
+            $packagedReport = Assert-LyraRuntime -ResultPath $packagedResult -UnrealLogPath $packagedLog -ExpectedMode "packaged" -ExpectedActiveFeatures $RequiredActiveGameFeatures -ExpectedRegisteredFeatures $RequiredRegisteredGameFeatures -ExpectedExperienceContains $ExpectedExperience
             $summary.package = [ordered]@{
                 process = $packageProcess
                 uat_log = $packageLog
+                output_root = $packageRoot
                 executable = $packagedExecutable
+                internal_executable = $packagedInternalExecutable
+                internal_executable_sha256 = $packagedInternalExecutableSha256
+                network_executable = $packagedNetworkExecutable
+                network_executable_sha256 = $packagedNetworkExecutableSha256
                 runtime = $packagedRuntime
                 report = $packagedResult
                 unreal_log = $packagedLog

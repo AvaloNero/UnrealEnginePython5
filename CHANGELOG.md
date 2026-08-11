@@ -3,7 +3,7 @@
 This file records the UE5 port maintained in this repository. The historical
 UE4 project history remains available in Git.
 
-## [Unreleased] - 0.4.0 Lyra integration
+## [0.4.0] - 2026-08-12
 
 ### Added
 
@@ -31,6 +31,34 @@ UE4 project history remains available in Git.
 - `PythonEditor` project-tree ownership now uses `TObjectPtr`; a separate
   non-reflected raw-pointer view feeds Slate. This satisfies Lyra's strict
   UE5.8 native-pointer target policy without weakening it.
+- Packaged validation writes `UEP58Host` to a guarded fixed output path and
+  records the tested executable hash in each timestamped result, preventing
+  Windows Firewall from treating every run as a new application without an
+  additional package-sized mirror copy.
+- Full-content Lyra packaging uses the same guarded fixed-output model for
+  `LyraGame`. The driver records UAT's original internal executable, synchronizes
+  its project-binary tree to a stable firewall identity, verifies
+  matching executable SHA-256 values and uses UE's `-basedir=` override so the
+  unmodified package layout remains authoritative.
+- After the complete Lyra Editor target compiles, gameplay/package staging
+  disables test-only `ShooterTests` and `RuntimeTests`, keeping runtime evidence
+  scoped to production Lyra features while their content remains readiness-
+  validated.
+- The Lyra Python probe now uses a monotonic wall-clock timeout, records its
+  final snapshot and pending requirements on failure, and logs changing pending
+  conditions instead of relying only on Unreal ticker delta time.
+- Network probes latch their fully ready snapshot before waiting on the shared
+  release gate, preventing one peer's faster shutdown from invalidating the
+  other peer's already-observed replication state.
+- Lyra Game Feature assertions now distinguish active gameplay code
+  (`ShooterCore`) from registered content ownership (`ShooterMaps`), matching
+  their actual plugin descriptors and observed UE5.8 lifecycle states.
+- Runtime validation pins `-culture=en` so UE5.8's startup Core smoke tests keep
+  their source-language string contract on localized Windows installations;
+  strict fatal/assert/`Log*: Error` rejection remains unchanged.
+- Incremental Lyra staging retains UEP/bridge build outputs, skips unchanged
+  files and prunes stale owned sources. Editor and package builds default to two
+  non-UBA actions to bound memory use on the validation host.
 
 ### Validation
 
@@ -46,19 +74,38 @@ UE4 project history remains available in Git.
   standalone, exception-boundary, Editor/Slate, cook/package and packaged-
   runtime checks; the packaged process used CPython 3.11.8 and exposed the new
   exit API.
+- Final generic UE5.8 regression `20260812-043408` repeated all six suites after
+  the release-driver changes: 70/70 checks passed, the full Development
+  BuildCookRun reported `BUILD SUCCESSFUL` and ExitCode 0, and the stable
+  packaged executable ran CPython 3.11.8 with zero fatal or error diagnostics.
 - Readiness result `20260811-184203` reports source ready but content blocked:
   the local Lyra Git sample contains zero assets/maps and lacks all five
   required GameFeatureData assets.
+- Complete external-project readiness results `20260812-005352` and
+  `20260812-013646` pass UE 5.8.0, CPython 3.11.8, all five Game Features and
+  every critical Unreal package without modifying the reference project.
 - Full-driver negative result `20260811-184148` stopped before staging with 11
   machine-readable content blockers, proving that source-only evidence cannot
   accidentally satisfy the full acceptance lane.
+- Pre-release `All` result `20260812-025232` passed strict readiness, the
+  incremental `LyraEditor` build, real Standalone gameplay, synchronized
+  dedicated-server/client authority and replication, and a full Win64
+  BuildCookRun. UAT completed its cold-DDC cook, stage and archive with
+  `BUILD SUCCESSFUL` and ExitCode 0; the driver then correctly stopped on an
+  incorrect assumed internal executable path before launching the package.
+- After correcting that guarded path, strict packaged result
+  `20260812-042711-packaged-resume` ran the bit-identical stable listener with
+  the original UAT BaseDir. It passed CPython 3.11.8, Experience,
+  `ShooterCore` Active, `ShooterMaps` Registered, Pawn/Input/ASC and orderly
+  shutdown with zero fatal/assert or `Log*: Error` diagnostics.
 
-### Not yet accepted
+### Supported boundaries
 
-- Version 0.4.0 is not released. Experience/Game Feature activation, real Lyra
-  pawn/input/GAS behavior, client/server replication, cook, package and
-  packaged runtime require a complete external Launcher/Marketplace Lyra
-  project and remain unclaimed.
+- Release-level runtime validation remains Win64-only on UE 5.8.0 with the
+  engine-bundled CPython 3.11.8. The Lyra bridge observes native ownership
+  boundaries; it does not activate features, grant abilities, replace input
+  mappings or mutate replicated authority-sensitive state. The reference Lyra
+  project and Unreal Engine source remain unchanged.
 
 ## [0.3.0] - 2026-08-11
 

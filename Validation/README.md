@@ -18,9 +18,9 @@ Zen server remaining alive after Cook exits.
 
 The core gate is complete only when a clean full run returns exit code 0 and its
 `summary.json` reports `status: passed`, UE 5.8, Python 3.11 and all six required
-suites. The 0.3.0 contract contains 67 required checks: 20 shared core checks,
-20 standalone core checks, two isolated exception-recovery checks, five editor
-checks and 20 packaged core checks. The core cases exercise UE5 `FField`-based
+suites. The 0.4.0 contract contains 70 required checks: 21 shared core checks,
+21 standalone core checks, two isolated exception-recovery checks, five editor
+checks and 21 packaged core checks. The core cases exercise UE5 `FField`-based
 dynamic class/function generation, `TSet`, non-trivial string returns, thread
 diagnostics, animation, UDP receiver lifecycle, parent event overrides and
 Enhanced Input callback release. Known exclusions must remain explicitly listed
@@ -34,6 +34,11 @@ claim gameplay parity.
 The validation output is local evidence and is intentionally ignored by Git.
 Source changes must be followed by a new run; an older green result is not a
 substitute for testing the changed source.
+
+Release-candidate result `20260812-043408` passed all six suites and 70/70
+checks against UE 5.8.0 and CPython 3.11.8. Its full Development BuildCookRun
+reported `BUILD SUCCESSFUL` and ExitCode 0, and its hash-recorded stable package
+completed the packaged core suite without fatal or error diagnostics.
 
 ## Full acceptance run
 
@@ -61,6 +66,16 @@ process exit causes the driver to return exit code 1. The two exception lanes
 may return 0 or 1 because UE commandlets count a handled logged Python exception
 as an error; their JSON recovery result and every `Log*: Error:` line are still
 validated explicitly.
+
+Timestamped results keep per-run logs, JSON reports and the SHA-256 of the
+tested game executable. The package itself is archived directly to the guarded
+fixed path `.build/Validation/Package`; Windows Firewall keys unpackaged
+listeners by their complete executable path, so later runs do not appear as new
+`UEP58Host` applications. Preconfigure TCP/UDP inbound **Block** rules for
+`.build/Validation/Package/Windows/UEP58Host/Binaries/Win64/UEP58Host.exe`, or
+choose **Cancel** if Windows asks once. The loopback-only UDP lifecycle test does
+not need public/private inbound access. Do not disable Firewall notifications
+globally.
 
 Packaged success is not inferred from the JSON marker alone. The executable
 must return exit code 0 after Unreal tears down its object system and UEP-owned
@@ -95,7 +110,8 @@ Skip packaging and reuse the existing staging directory:
 ```
 
 Omit `-Incremental` for a clean staging copy. Clean-up is restricted to the
-script-marked `.build/Validation/UEP58Host` directory.
+script-marked `.build/Validation/UEP58Host` and
+`.build/Validation/Package` directories.
 
 The quick run still compiles the Runtime plugin through UBT's foreign-plugin
 mode. While iterating only on Python tests, that compile can also be skipped:
@@ -147,7 +163,7 @@ Check a candidate project without changing it:
 ```powershell
 .\Validation\Test-UEP58LyraReadiness.ps1 `
     -EngineRoot F:\UnrealEngine `
-    -LyraProject F:\UnrealEngine\Samples\Games\Lyra\Lyra.uproject
+    -LyraProject F:\LyraStarterGame\LyraStarterGame.uproject
 ```
 
 The report separates `source_ready` from `content_ready`. Add `-Strict` only
@@ -179,10 +195,10 @@ gameplay, networking or packaging.
 Current evidence is clean source result `20260811-165230`, final source
 regression `20260811-183357` (Standalone plus dedicated-server graceful exit),
 full generic regression `20260811-184425` (70/70 including packaged runtime),
-and readiness result
-`20260811-184203` (`source_ready: true`, `content_ready: false`). Full 0.4.0
-acceptance remains blocked until a complete external Lyra project is available;
-do not copy Marketplace assets into the engine source checkout.
+and full-content readiness result `20260812-005352` (`status: ready`, UE 5.8.0,
+CPython 3.11.8, all five Game Features and all critical packages valid). The
+reference project is `F:\LyraStarterGame\LyraStarterGame.uproject`; it remains
+external and is never modified by validation.
 
 ### Full-content acceptance lane
 
@@ -192,7 +208,7 @@ the Unreal Engine source tree:
 ```powershell
 .\Validation\Run-UEP58LyraValidation.ps1 `
     -EngineRoot F:\UnrealEngine `
-    -LyraProject F:\UEProjects\Lyra\Lyra.uproject `
+    -LyraProject F:\LyraStarterGame\LyraStarterGame.uproject `
     -Mode All
 ```
 
@@ -200,11 +216,19 @@ The driver first invokes strict readiness and refuses to create its disposable
 stage unless all required assets/maps and root GameFeatureData assets exist. It
 then copies the project to marker-protected
 `.build/LyraValidation/Full/Stage/Lyra`, injects UEP and `UEPLyraBridge`, and
-runs these gates without changing the reference project:
+disables the unrelated desktop `AndroidFileServer` only in that disposable
+stage. After compiling the complete Editor target, it disables the test-only
+`ShooterTests` and `RuntimeTests` roots for gameplay/package execution so the
+runtime evidence covers production Lyra features. ShooterTests content is still
+staged and validated by readiness. Runtime launches pin `-culture=en` because
+UE5.8's startup Core smoke tests compare source-language UnifiedError strings;
+on a localized Windows culture those engine tests otherwise emit false
+`LogAutomationTest: Error` diagnostics. The strict runtime error gate is not
+relaxed. The driver runs these gates without changing the reference project:
 
 1. warning/error-free `LyraEditor` build;
-2. real `L_Expanse` Standalone Experience with active `ShooterCore` and
-   `ShooterMaps`, local pawn, PlayerState, Enhanced Input and ASC;
+2. real `L_Expanse` Standalone Experience with active `ShooterCore`, registered
+   content-only `ShooterMaps`, local pawn, PlayerState, Enhanced Input and ASC;
 3. a dedicated server/client pair proving remote connection, server authority,
    client `AutonomousProxy`, replicated PlayerState and ASC on both roles. Both
    processes wait behind a shared release signal until both readiness markers
@@ -212,7 +236,35 @@ runs these gates without changing the reference project:
 4. Win64 BuildCookRun followed by the same gameplay contract in `LyraGame.exe`
    with UEP-owned CPython 3.11.
 
+Per-run logs and JSON remain under `Results/<timestamp>`, while the package is
+archived directly to the marker-protected fixed path
+`.build/LyraValidation/Full/Package`. UAT's internal executable remains at
+`Windows/LyraStarterGame/Binaries/Win64/LyraGame.exe`; the driver synchronizes
+its complete `Binaries/Win64` tree to the validation-only stable listener path
+`Windows/LyraGame/Binaries/Win64/LyraGame.exe`. It verifies that both executable
+SHA-256 values match before launch and passes the original directory through
+UE's `-basedir=` override, so project, engine and ICU content still resolve from
+the unmodified UAT layout. This avoids a package-sized mirror and a new Windows
+Firewall application identity for every timestamp. Each result records the
+wrapper, original internal executable, tested listener and both hashes.
+Preconfigure TCP/UDP inbound **Block** rules for the stable listener path if the
+host has no existing policy; packaged Standalone validation does not require
+public/private inbound access. Do not disable Firewall notifications globally.
+
+`-Incremental` retains injected-plugin `Binaries`/`Intermediate`, skips files
+whose size and UTC timestamp are unchanged, and prunes stale owned source files.
+Both direct UBT and BuildCookRun's UBT child default to two non-UBA actions via
+`-MaxParallelActions`; override the script parameter only on a host with enough
+memory.
+
 `Readiness`, `Standalone`, `Network` and `Package` modes run narrower diagnostic
 lanes; only `All` can set `full_acceptance: true`. Negative result
 `20260811-184148` correctly reports `blocked` with 11 missing-content reasons
 and no staging project for the local Git sample.
+
+Pre-release `All` result `20260812-025232` passed readiness, Editor build,
+Standalone and synchronized network roles, then completed its cold-DDC Win64
+BuildCookRun with UAT ExitCode 0. Its post-archive executable guard exposed one
+incorrect assumed internal directory before packaged launch. The corrected,
+hash-verified package passed the exact packaged gameplay and strict lifecycle/
+log contract in result `20260812-042711-packaged-resume`.

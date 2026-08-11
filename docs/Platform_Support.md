@@ -2,10 +2,17 @@
 
 ## Release-validated platform
 
-UnrealEnginePython 0.3.0 is release-validated on Win64 with Unreal Engine 5.8.0
-and the engine-bundled CPython 3.11.8. The gate compiles Editor and Game plugin
-targets, runs shared and UEP-owned interpreters, runs full editor tests, cooks a
-Development package and executes the packaged game.
+UnrealEnginePython 0.4.0 is release-validated on Win64 with Unreal Engine 5.8.0
+and the engine-bundled CPython 3.11.8. The core gate compiles Editor and Game
+plugin targets, runs shared and UEP-owned interpreters, runs full editor tests,
+cooks a Development package and executes the packaged game. The Lyra gate adds
+strict content readiness, Standalone gameplay, synchronized dedicated-
+server/client authority and replication, full Win64 BuildCookRun and packaged
+Experience/Pawn/Input/ASC validation.
+
+The final generic Win64 result `20260812-043408` passed 70/70 shared,
+standalone, exception-boundary, Editor/Slate and packaged-runtime checks; its
+Development BuildCookRun completed with UAT ExitCode 0.
 
 No Unreal Engine source change is required or permitted by these workflows.
 
@@ -34,5 +41,5 @@ Recheck without changing the SDK:
 
 Use `-Strict` in CI when missing readiness must return a failure code.
 
-Mac, LinuxArm64, Android and console platforms have no 0.3.0 release-level
+Mac, LinuxArm64, Android and console platforms have no 0.4.0 release-level
 runtime result and are not included in the support claim.

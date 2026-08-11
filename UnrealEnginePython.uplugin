@@ -1,7 +1,7 @@
 {
 	"FileVersion": 3,
-	"Version": 300,
-	"VersionName": "0.3.0",
+	"Version": 400,
+	"VersionName": "0.4.0",
 	"FriendlyName": "UnrealEnginePython",
 	"Description": "Unreal Engine 5.8 and CPython 3.11 bindings and runtime integration",
 	"Category": "Scripting Languages",
