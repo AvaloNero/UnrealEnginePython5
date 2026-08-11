@@ -28,9 +28,14 @@ content while writing to a new non-destructive result directory.
 ```
 
 This invokes UE5.8 AutomationTool `BuildPlugin`, validates its success markers,
-zips the staged plugin and adds its hash and engine/platform identity to the
-same manifest. A binary artifact is tied to the exact UE version and target
-platform in its filename; it is not a portable cross-version plugin binary.
+and adds its hash and engine/platform identity to the same manifest. BuildPlugin
+never receives the repository path: the script extracts the audited source zip
+to an isolated staging tree and compiles that exact commit. Both the resulting
+package tree and final zip are scanned for repository metadata, internal
+reference material, temporary host projects and Python bytecode before the
+artifact is accepted. A binary artifact is tied to the exact UE version and
+target platform in its filename; it is not a portable cross-version plugin
+binary.
 
 Artifacts are written under `.build/Releases/<version>/` and remain untracked.
 `-AllowDirty` exists only for developing the packaging script; release evidence

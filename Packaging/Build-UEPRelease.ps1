@@ -64,7 +64,6 @@ function Invoke-CheckedProcess {
 }
 
 $repoRoot = Get-FullPath (Join-Path $PSScriptRoot "..")
-$pluginPath = Join-Path $repoRoot "UnrealEnginePython.uplugin"
 $commitHash = (& git -C $repoRoot rev-parse "$Commit^{commit}").Trim()
 if ($LASTEXITCODE -ne 0 -or $commitHash -notmatch "^[0-9a-f]{40}$") {
     throw "Could not resolve Git commit '$Commit'"
@@ -89,16 +88,6 @@ if (!$AllowDirty) {
     }
     if ($dirtyPaths.Count -gt 0) {
         throw "Release packaging requires a clean worktree. Use -AllowDirty only for script development."
-    }
-}
-
-if ($IncludeBinary) {
-    $headHash = (& git -C $repoRoot rev-parse "HEAD^{commit}").Trim()
-    if ($LASTEXITCODE -ne 0 -or $headHash -notmatch "^[0-9a-f]{40}$") {
-        throw "Could not resolve HEAD for binary packaging"
-    }
-    if ($commitHash -ne $headHash) {
-        throw "Binary packaging requires -Commit to resolve to HEAD because BuildPlugin consumes the checked-out source"
     }
 }
 
@@ -148,7 +137,7 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem
 $zip = [System.IO.Compression.ZipFile]::OpenRead($archivePath)
 try {
     $forbiddenEntries = @($zip.Entries | Where-Object {
-        $_.FullName -match "(?:^|/)(?:\.nepy|\.build|Binaries|Intermediate|__pycache__)(?:/|$)" -or
+        $_.FullName -match "(?:^|/)(?:\.nepy|\.build|\.git|\.codegraph|Binaries|Intermediate|__pycache__)(?:/|$)" -or
         $_.FullName -match "\.py[co]$"
     })
     if ($forbiddenEntries.Count -gt 0) {
@@ -193,6 +182,17 @@ if ($IncludeBinary) {
     }
     $engineVersion = "$($engineVersionObject.MajorVersion).$($engineVersionObject.MinorVersion).$($engineVersionObject.PatchVersion)"
 
+    # BuildPlugin copies the directory containing the descriptor before its own
+    # filtering runs. Never point it at the repository: extract the already
+    # audited public source archive and compile only that isolated tree.
+    $binarySourceRoot = Join-Path $releaseRoot "BinarySource"
+    [System.IO.Compression.ZipFile]::ExtractToDirectory($archivePath, $binarySourceRoot)
+    $stagedPluginRoot = Join-Path $binarySourceRoot "UnrealEnginePython-$version"
+    $stagedPluginPath = Join-Path $stagedPluginRoot "UnrealEnginePython.uplugin"
+    if (!(Test-Path -LiteralPath $stagedPluginPath -PathType Leaf)) {
+        throw "Isolated binary source descriptor was not found: $stagedPluginPath"
+    }
+
     $binaryPackageRoot = Join-Path $releaseRoot "BinaryPackage"
     $uatLogRoot = Join-Path $releaseRoot "BuildPluginLogs"
     $uatLog = Join-Path $uatLogRoot "Log.txt"
@@ -200,7 +200,7 @@ if ($IncludeBinary) {
     $uatArguments = @(
         $automationToolPath,
         "BuildPlugin",
-        "-Plugin=$pluginPath",
+        "-Plugin=$stagedPluginPath",
         "-Package=$binaryPackageRoot",
         "-TargetPlatforms=$($TargetPlatforms -join '+')",
         "-WaitForUATMutex",
@@ -223,15 +223,43 @@ if ($IncludeBinary) {
         }
     }
 
+    $binaryPackageEntries = @(Get-ChildItem -LiteralPath $binaryPackageRoot -Recurse -Force)
+    $forbiddenBinaryPackageEntries = @($binaryPackageEntries | Where-Object {
+        $relativePath = [System.IO.Path]::GetRelativePath($binaryPackageRoot, $_.FullName).Replace("\", "/")
+        $relativePath -match "(?:^|/)(?:\.nepy|\.build|\.git|\.codegraph|HostProject|__pycache__)(?:/|$)" -or
+        $relativePath -match "\.py[co]$"
+    })
+    if ($forbiddenBinaryPackageEntries.Count -gt 0) {
+        $relativeForbiddenPaths = $forbiddenBinaryPackageEntries | ForEach-Object {
+            [System.IO.Path]::GetRelativePath($binaryPackageRoot, $_.FullName)
+        }
+        throw "Binary package staging contains forbidden entries: $($relativeForbiddenPaths -join ', ')"
+    }
+
     $binaryArchiveName = "UnrealEnginePython-$version-UE$engineVersion-$($TargetPlatforms -join '+').zip"
     $binaryArchivePath = Join-Path $releaseRoot $binaryArchiveName
     Compress-Archive -Path (Join-Path $binaryPackageRoot "*") -DestinationPath $binaryArchivePath -CompressionLevel Optimal
+    $binaryZip = [System.IO.Compression.ZipFile]::OpenRead($binaryArchivePath)
+    try {
+        $forbiddenBinaryArchiveEntries = @($binaryZip.Entries | Where-Object {
+            $_.FullName -match "(?:^|/)(?:\.nepy|\.build|\.git|\.codegraph|HostProject|__pycache__)(?:/|$)" -or
+            $_.FullName -match "\.py[co]$"
+        })
+        if ($forbiddenBinaryArchiveEntries.Count -gt 0) {
+            throw "Binary archive contains forbidden entries: $(($forbiddenBinaryArchiveEntries.FullName) -join ', ')"
+        }
+        $binaryEntryCount = $binaryZip.Entries.Count
+    }
+    finally {
+        $binaryZip.Dispose()
+    }
     $binaryHash = (Get-FileHash -LiteralPath $binaryArchivePath -Algorithm SHA256).Hash.ToLowerInvariant()
     $artifacts.Add([ordered]@{
         kind = "binary"
         file = $binaryArchiveName
         sha256 = $binaryHash
         bytes = (Get-Item -LiteralPath $binaryArchivePath).Length
+        entries = $binaryEntryCount
         engine = $engineVersion
         target_platforms = $TargetPlatforms
         build_log = $uatLog
