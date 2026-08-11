@@ -98,6 +98,12 @@ UE4 project history remains available in Git.
   the original UAT BaseDir. It passed CPython 3.11.8, Experience,
   `ShooterCore` Active, `ShooterMaps` Registered, Pawn/Input/ASC and orderly
   shutdown with zero fatal/assert or `Log*: Error` diagnostics.
+- Named release-code commit `c797d56` then passed the complete lane in one
+  formal `All` result, `20260812-051532`, with `full_acceptance: true`. The run
+  repeated readiness, Editor build, Standalone and synchronized network roles,
+  cooked 4,046 packages, archived Win64, and passed the packaged game. Every
+  process exited 0, UAT and all runtime logs contained zero error diagnostics,
+  and the internal/tested executable SHA-256 values matched.
 
 ### Supported boundaries
 

@@ -115,6 +115,12 @@ bit-identical package passed the full gameplay and lifecycle contract in strict
 result `20260812-042711-packaged-resume` with CPython 3.11.8 and zero fatal or
 `Log*: Error` diagnostics.
 
+Named release-code commit `c797d56` subsequently passed formal `All` result
+`20260812-051532` from readiness through packaged runtime in one invocation and
+set `full_acceptance: true`. It cooked 4,046 packages, returned exit code 0 for
+Editor, Standalone, both network roles, UAT and packaged gameplay, and retained
+zero strict runtime/UAT error diagnostics with matching executable hashes.
+
 The completed boundary keeps Game Feature activation, ability grants, input
 mappings and replicated authority-sensitive state native to Lyra. Python
 observes those states through the disposable bridge. The reference project and

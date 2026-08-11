@@ -14,6 +14,10 @@ The final generic Win64 result `20260812-043408` passed 70/70 shared,
 standalone, exception-boundary, Editor/Slate and packaged-runtime checks; its
 Development BuildCookRun completed with UAT ExitCode 0.
 
+The final Lyra result `20260812-051532` passed the complete `All` lane for named
+release-code commit `c797d56` and reported `full_acceptance: true`, including
+synchronized client/server evidence and a 4,046-package Win64 BuildCookRun.
+
 No Unreal Engine source change is required or permitted by these workflows.
 
 ## Linux lane

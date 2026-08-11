@@ -132,3 +132,10 @@ firewall identity, strict packaged result `20260812-042711-packaged-resume`
 passed items 6–7 on the same artifact: CPython 3.11.8, the expected Experience,
 Pawn/Input/ASC, active/registered Game Feature states, orderly shutdown and zero
 fatal/assert or `Log*: Error` diagnostics.
+
+The final named release-code gate is commit `c797d56`, result
+`20260812-051532`. One `All` invocation repeated all seven items and wrote
+`full_acceptance: true`: UE 5.8.0, CPython 3.11.8, 4,046 cooked packages,
+Standalone and packaged Input/ASC readiness, synchronized Client and
+DedicatedServer authority/replication, zero process failures or strict log
+errors, and matching archived/tested executable SHA-256 values.
