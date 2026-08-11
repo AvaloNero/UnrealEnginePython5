@@ -3,6 +3,14 @@
 
 static PyObject *py_ue_fsocket_start_receiver(ue_PyFSocket *self, PyObject * args)
 {
+	if (!PyArg_ParseTuple(args, ":start_receiver"))
+	{
+		return nullptr;
+	}
+	if (!self->sock)
+	{
+		return PyErr_Format(PyExc_RuntimeError, "socket is closed or was not initialized");
+	}
 
 	if (self->udp_receiver)
 	{
@@ -39,6 +47,10 @@ static void sock_stop_receiver(ue_PyFSocket *self)
 
 static PyObject *py_ue_fsocket_stop_receiver(ue_PyFSocket *self, PyObject * args)
 {
+	if (!PyArg_ParseTuple(args, ":stop_receiver"))
+	{
+		return nullptr;
+	}
 	if (!self->udp_receiver)
 	{
 		return PyErr_Format(PyExc_Exception, "receiver not started");
@@ -52,6 +64,10 @@ static PyObject *py_ue_fsocket_stop_receiver(ue_PyFSocket *self, PyObject * args
 
 static PyObject *py_ue_fsocket_close(ue_PyFSocket *self, PyObject * args)
 {
+	if (!PyArg_ParseTuple(args, ":close"))
+	{
+		return nullptr;
+	}
 
 	if (self->udp_receiver)
 	{
@@ -77,6 +93,10 @@ static PyMethodDef ue_PyFSocket_methods[] = {
 
 static PyObject *ue_PyFSocket_str(ue_PyFSocket *self)
 {
+	if (!self->sock)
+	{
+		return PyUnicode_FromString("<unreal_engine.FSocket closed>");
+	}
 	return PyUnicode_FromFormat("<unreal_engine.FSocket '%s'>",
 		TCHAR_TO_UTF8(*self->sock->GetDescription()));
 }
@@ -88,6 +108,17 @@ static void ue_py_fsocket_dealloc(ue_PyFSocket *self)
 	sock_close(self);
 	Py_TYPE(self)->tp_free(reinterpret_cast<PyObject *>(self));
 
+}
+
+static PyObject *ue_py_fsocket_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
+{
+	ue_PyFSocket *self = reinterpret_cast<ue_PyFSocket *>(type->tp_alloc(type, 0));
+	if (self)
+	{
+		self->sock = nullptr;
+		self->udp_receiver = nullptr;
+	}
+	return reinterpret_cast<PyObject *>(self);
 }
 
 static PyTypeObject ue_PyFSocketType = {
@@ -131,19 +162,41 @@ static int ue_py_fsocket_init(ue_PyFSocket *self, PyObject *args, PyObject *kwar
 	int buffer_size = 1024;
 	if (!PyArg_ParseTuple(args, "ssi|i", &socket_desc, &socket_addr, &port_number, &buffer_size))
 		return -1;
+	if (port_number < 0 || port_number > MAX_uint16)
+	{
+		PyErr_SetString(PyExc_ValueError, "port must be between 0 and 65535");
+		return -1;
+	}
+	if (buffer_size <= 0)
+	{
+		PyErr_SetString(PyExc_ValueError, "buffer_size must be greater than zero");
+		return -1;
+	}
+
+	sock_stop_receiver(self);
+	sock_close(self);
 
 	FIPv4Address addr;
-	FIPv4Address::Parse(socket_addr, addr);
+	if (!FIPv4Address::Parse(socket_addr, addr))
+	{
+		PyErr_Format(PyExc_ValueError, "invalid IPv4 address: %s", socket_addr);
+		return -1;
+	}
 	FIPv4Endpoint endpoint(addr, port_number);
 
 	self->sock = FUdpSocketBuilder(UTF8_TO_TCHAR(socket_desc)).AsNonBlocking().AsReusable().BoundToEndpoint(endpoint).WithReceiveBufferSize(buffer_size);
+	if (!self->sock)
+	{
+		PyErr_Format(PyExc_RuntimeError, "unable to bind UDP socket %s to %s:%d", socket_desc, socket_addr, port_number);
+		return -1;
+	}
 
 	return 0;
 }
 
 void ue_python_init_fsocket(PyObject *ue_module)
 {
-	ue_PyFSocketType.tp_new = PyType_GenericNew;
+	ue_PyFSocketType.tp_new = ue_py_fsocket_new;
 
 	ue_PyFSocketType.tp_init = (initproc)ue_py_fsocket_init;
 

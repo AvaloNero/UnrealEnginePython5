@@ -70,6 +70,7 @@ public:
 	ue_PyUObject *GetPyUObject(UObject *Object);
 	UPythonDelegate *FindDelegate(UObject *Owner, PyObject *PyCallable);
 	UPythonDelegate *NewDelegate(UObject *Owner, PyObject *PyCallable, UFunction *Signature);
+	bool ReleaseDelegate(UObject *Owner, UPythonDelegate *Delegate);
 	TSharedRef<FPythonSlateDelegate> NewSlateDelegate(TSharedRef<SWidget> Owner, PyObject *PyCallable);
 	TSharedRef<FPythonSlateDelegate> NewDeferredSlateDelegate(PyObject *PyCallable);
 	TSharedRef<FPythonSmartDelegate> NewPythonSmartDelegate(PyObject *PyCallable);

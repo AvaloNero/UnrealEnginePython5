@@ -14,6 +14,6 @@ public:
 
 	DECLARE_FUNCTION(CallPythonCallable);
 
-	PyObject *py_callable;
+	PyObject *py_callable = nullptr;
 };
 

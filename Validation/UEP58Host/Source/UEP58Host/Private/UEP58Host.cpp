@@ -1,4 +1,5 @@
 #include "CoreMinimal.h"
+#include "Containers/Ticker.h"
 #include "HAL/PlatformMisc.h"
 #include "Misc/CommandLine.h"
 #include "Misc/CoreDelegates.h"
@@ -20,29 +21,43 @@ public:
         }
 
         FParse::Value(FCommandLine::Get(), TEXT("UEPValidationResult="), ValidationResult);
-        AllModulesLoadedHandle = FCoreDelegates::OnAllModuleLoadingPhasesComplete.AddRaw(
+        EngineInitCompleteHandle = FCoreDelegates::OnFEngineLoopInitComplete.AddRaw(
             this,
-            &FUEP58HostModule::RunRequestedValidation
+            &FUEP58HostModule::ScheduleRequestedValidation
         );
     }
 
     virtual void ShutdownModule() override
     {
-        if (AllModulesLoadedHandle.IsValid())
+        if (EngineInitCompleteHandle.IsValid())
         {
-            FCoreDelegates::OnAllModuleLoadingPhasesComplete.Remove(AllModulesLoadedHandle);
-            AllModulesLoadedHandle.Reset();
+            FCoreDelegates::OnFEngineLoopInitComplete.Remove(EngineInitCompleteHandle);
+            EngineInitCompleteHandle.Reset();
+        }
+        if (ValidationTickerHandle.IsValid())
+        {
+            FTSTicker::GetCoreTicker().RemoveTicker(ValidationTickerHandle);
+            ValidationTickerHandle.Reset();
         }
     }
 
 private:
-    void RunRequestedValidation()
+    void ScheduleRequestedValidation()
     {
-        if (AllModulesLoadedHandle.IsValid())
+        if (EngineInitCompleteHandle.IsValid())
         {
-            FCoreDelegates::OnAllModuleLoadingPhasesComplete.Remove(AllModulesLoadedHandle);
-            AllModulesLoadedHandle.Reset();
+            FCoreDelegates::OnFEngineLoopInitComplete.Remove(EngineInitCompleteHandle);
+            EngineInitCompleteHandle.Reset();
         }
+
+        ValidationTickerHandle = FTSTicker::GetCoreTicker().AddTicker(
+            FTickerDelegate::CreateRaw(this, &FUEP58HostModule::RunRequestedValidation)
+        );
+    }
+
+    bool RunRequestedValidation(float)
+    {
+        ValidationTickerHandle.Reset();
 
         UE_LOG(LogUEP58Validation, Display, TEXT("Running packaged validation script: %s"), *ValidationScript);
 
@@ -75,11 +90,13 @@ private:
             bPassed ? 0 : 2,
             TEXT("FUEP58HostModule::RunRequestedValidation")
         );
+        return false;
     }
 
     FString ValidationScript;
     FString ValidationResult;
-    FDelegateHandle AllModulesLoadedHandle;
+    FDelegateHandle EngineInitCompleteHandle;
+    FTSTicker::FDelegateHandle ValidationTickerHandle;
 };
 
 IMPLEMENT_PRIMARY_GAME_MODULE(FUEP58HostModule, UEP58Host, "UEP58Host");

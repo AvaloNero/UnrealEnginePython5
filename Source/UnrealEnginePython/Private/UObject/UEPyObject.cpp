@@ -1677,23 +1677,37 @@ static void ue_py_configure_dynamic_property(
 	{
 		class_property->PropertyClass = UClass::StaticClass();
 		class_property->SetMetaClass(object_class ? object_class : UObject::StaticClass());
+		class_property->SetPropertyFlags(CPF_HasGetValueTypeHash);
 	}
 	else if (FObjectPropertyBase* object_property = CastField<FObjectPropertyBase>(property))
 	{
 		object_property->SetPropertyClass(object_class ? object_class : UObject::StaticClass());
+		object_property->SetPropertyFlags(CPF_HasGetValueTypeHash);
 	}
 	else if (FStructProperty* struct_property = CastField<FStructProperty>(property))
 	{
 		struct_property->Struct = script_struct;
+		if (script_struct && script_struct->GetCppStructOps() &&
+			script_struct->GetCppStructOps()->HasGetTypeHash())
+		{
+			struct_property->SetPropertyFlags(CPF_HasGetValueTypeHash);
+		}
 	}
 	else if (FEnumProperty* enum_property = CastField<FEnumProperty>(property))
 	{
 		enum_property->SetEnum(enum_type);
 		enum_property->AddCppProperty(new FByteProperty(enum_property, TEXT("UnderlyingType")));
+		enum_property->SetPropertyFlags(CPF_HasGetValueTypeHash);
 	}
 	else if (FByteProperty* byte_property = CastField<FByteProperty>(property))
 	{
 		byte_property->Enum = enum_type;
+		byte_property->SetPropertyFlags(CPF_HasGetValueTypeHash);
+	}
+	else if (CastField<FNumericProperty>(property) || CastField<FBoolProperty>(property) ||
+		CastField<FNameProperty>(property) || CastField<FStrProperty>(property))
+	{
+		property->SetPropertyFlags(CPF_HasGetValueTypeHash);
 	}
 }
 
@@ -1744,7 +1758,38 @@ PyObject *py_ue_add_property(ue_PyUObject * self, PyObject * args)
 	FFieldClass* field_class = nullptr;
 	FFieldClass* second_field_class = nullptr;
 
-	if (PyList_Check(obj))
+	if (PyAnySet_Check(obj))
+	{
+		if (PySet_Size(obj) != 1)
+		{
+			return PyErr_Format(PyExc_TypeError, "property sets must contain exactly one element type");
+		}
+
+		PyObject* iterator = PyObject_GetIter(obj);
+		PyObject* item = iterator ? PyIter_Next(iterator) : nullptr;
+		Py_XDECREF(iterator);
+		if (!item)
+		{
+			return PyErr_Format(PyExc_TypeError, "unable to read the set element property type");
+		}
+		field_class = ue_py_get_ffield_class_from_capsule(item);
+		Py_DECREF(item);
+		if (!field_class)
+		{
+			return PyErr_Format(PyExc_TypeError, "set element is not an FProperty class");
+		}
+
+		FSetProperty* set_property = new FSetProperty(owner_struct, FName(UTF8_TO_TCHAR(name)));
+		inner_property = ue_py_construct_dynamic_property(field_class, set_property, TEXT("Element"));
+		if (!inner_property)
+		{
+			delete set_property;
+			return PyErr_Format(PyExc_RuntimeError, "unable to construct set element property");
+		}
+		set_property->ElementProp = inner_property;
+		property = set_property;
+	}
+	else if (PyList_Check(obj))
 	{
 		const Py_ssize_t item_count = PyList_Size(obj);
 		if (item_count != 1 && item_count != 2)
@@ -1798,9 +1843,10 @@ PyObject *py_ue_add_property(ue_PyUObject * self, PyObject * args)
 		{
 			return PyErr_Format(PyExc_TypeError, "argument is not an FProperty class");
 		}
-		if (field_class == FArrayProperty::StaticClass() || field_class == FMapProperty::StaticClass())
+		if (field_class == FArrayProperty::StaticClass() || field_class == FSetProperty::StaticClass() ||
+			field_class == FMapProperty::StaticClass())
 		{
-			return PyErr_Format(PyExc_TypeError, "use a list to declare array or map properties");
+			return PyErr_Format(PyExc_TypeError, "use a list, set, or dict to declare container properties");
 		}
 		property = ue_py_construct_dynamic_property(field_class, owner_struct, FName(UTF8_TO_TCHAR(name)));
 	}
@@ -1812,17 +1858,24 @@ PyObject *py_ue_add_property(ue_PyUObject * self, PyObject * args)
 
 	if (inner_property)
 	{
-		inner_property->SetPropertyFlags(CPF_ZeroConstructor | CPF_HasGetValueTypeHash);
+		inner_property->SetPropertyFlags(CPF_ZeroConstructor);
 		ue_py_configure_dynamic_property(inner_property, object_class, script_struct, enum_type);
 	}
 	if (second_inner_property)
 	{
-		second_inner_property->SetPropertyFlags(CPF_ZeroConstructor | CPF_HasGetValueTypeHash);
+		second_inner_property->SetPropertyFlags(CPF_ZeroConstructor);
 		ue_py_configure_dynamic_property(second_inner_property, object_class2, script_struct2, enum_type2);
 	}
 	if (!inner_property)
 	{
 		ue_py_configure_dynamic_property(property, object_class, script_struct, enum_type);
+	}
+	if (inner_property &&
+		(CastField<FSetProperty>(property) || CastField<FMapProperty>(property)) &&
+		!inner_property->HasAllPropertyFlags(CPF_HasGetValueTypeHash))
+	{
+		delete property;
+		return PyErr_Format(PyExc_TypeError, "container key/element property %s is not hashable", name);
 	}
 
 	EPropertyFlags flags = CPF_Edit | CPF_BlueprintVisible | CPF_ZeroConstructor;

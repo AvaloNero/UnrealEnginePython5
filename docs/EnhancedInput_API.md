@@ -1,6 +1,6 @@
 # Enhanced Input API
 
-UnrealEnginePython 0.2.0 exposes the UE5 Enhanced Input operations needed by
+UnrealEnginePython 0.3.0 exposes the UE5 Enhanced Input operations needed by
 runtime Python gameplay. The methods are available on compatible wrapped
 UObjects and use the local player's `UEnhancedInputLocalPlayerSubsystem` or an
 `UEnhancedInputComponent` owned by the player/possessed pawn.
@@ -32,6 +32,11 @@ jump_end_handle = pawn.bind_enhanced_action(IA_JUMP, COMPLETED, on_stop_jump)
 count = pawn.get_enhanced_action_binding_count()
 removed = pawn.remove_enhanced_action_binding(move_handle)
 ```
+
+The binding owns a strong Python reference to its callback. Successful removal
+clears that reference immediately; keep the numeric handle and remove it during
+the owning object's teardown. A second removal of the same handle returns
+`False`.
 
 `bind_enhanced_action(action, trigger_event, callback)` returns the binding's
 unsigned handle. The callback receives one Python value derived from the input

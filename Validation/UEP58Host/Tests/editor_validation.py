@@ -107,6 +107,36 @@ def validate_asset_lifecycle():
     check(loaded is not None, f"Could not load saved asset {asset_path}")
 
 
+def validate_sequencer_lifecycle():
+    from unreal_engine.classes import LevelSequenceFactoryNew, MovieSceneAudioTrack
+
+    package_name = "/Game/UEPValidation/LS_UEP58Validation"
+    sequence = LevelSequenceFactoryNew().factory_create_new(package_name)
+    check(sequence is not None, "Could not create a LevelSequence")
+    check(sequence.sequencer_master_tracks() == [], sequence.sequencer_master_tracks())
+
+    track = sequence.sequencer_add_master_track(MovieSceneAudioTrack)
+    check(track in sequence.sequencer_master_tracks(), sequence.sequencer_master_tracks())
+    section = track.sequencer_track_add_section()
+    check(section in track.sequencer_track_sections(), track.sequencer_track_sections())
+    check(section in sequence.sequencer_sections(), sequence.sequencer_sections())
+
+    folder = sequence.sequencer_create_folder("UEP58Validation")
+    check(folder in sequence.sequencer_folders(), sequence.sequencer_folders())
+    sequence.sequencer_set_playback_range(0.0, 2.0)
+    sequence.sequencer_set_working_range(0.0, 2.0)
+    sequence.sequencer_set_view_range(0.0, 2.0)
+
+    sequence.save_package(package_name)
+    loaded = ue.get_asset(f"{package_name}.LS_UEP58Validation")
+    check(loaded is not None, "Could not reload saved LevelSequence")
+    check(len(loaded.sequencer_master_tracks()) == 1, loaded.sequencer_master_tracks())
+    check(len(loaded.sequencer_sections()) == 1, loaded.sequencer_sections())
+    check(len(loaded.sequencer_folders()) == 1, loaded.sequencer_folders())
+    check(loaded.sequencer_remove_master_track(track), "Could not remove the master track")
+    check(loaded.sequencer_master_tracks() == [], loaded.sequencer_master_tracks())
+
+
 def validate_slate_item_ownership():
     from unreal_engine import SPythonComboBox, SPythonListView, SPythonTreeView, STextBlock
 
@@ -156,6 +186,7 @@ def validate_slate_item_ownership():
 run_case("shared_editor_interpreter", validate_shared_editor_interpreter)
 run_case("actor_spawn_call_and_destroy", validate_actor_lifecycle)
 run_case("asset_create_save_and_load", validate_asset_lifecycle)
+run_case("sequencer_asset_track_section_and_folder_lifecycle", validate_sequencer_lifecycle)
 run_case("slate_item_reference_ownership", validate_slate_item_ownership)
 
 failed = [item for item in results if item["status"] == "failed"]
@@ -170,7 +201,7 @@ report = {
     "passed": len(results) - len(failed),
     "failed": len(failed),
     "known_skips": [
-        "delete_asset unattended reference scan; the driver removes the isolated test asset after editor exit",
+        "delete_asset unattended reference scan; the driver removes the two isolated test assets after editor exit",
     ],
     "tests": results,
 }

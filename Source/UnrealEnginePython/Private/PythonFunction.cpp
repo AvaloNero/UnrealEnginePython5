@@ -5,8 +5,9 @@
 
 void UPythonFunction::SetPyCallable(PyObject *callable)
 {
+	Py_XINCREF(callable);
+	Py_XDECREF(py_callable);
 	py_callable = callable;
-	Py_INCREF(py_callable);
 }
 
 
@@ -38,6 +39,11 @@ void UPythonFunction::CallPythonCallable(FFrame& Stack, RESULT_DECL)
 	UE_LOG(LogPython, Warning, TEXT("Initializing %d parameters"), argn);
 #endif
 	PyObject *py_args = PyTuple_New(argn);
+	if (!py_args)
+	{
+		unreal_engine_py_log_error();
+		return;
+	}
 	argn = 0;
 
 	if (Context && !is_static) {
@@ -53,9 +59,10 @@ void UPythonFunction::CallPythonCallable(FFrame& Stack, RESULT_DECL)
 	}
 
 	uint8 *frame = Stack.Locals;
+	bool owns_frame = false;
 
 	// is it a blueprint call ?
-	if (*Stack.Code == EX_EndFunctionParms) {
+	if (!Stack.Code || *Stack.Code == EX_EndFunctionParms) {
 		for (TFieldIterator<FProperty> PropIt(function); PropIt; ++PropIt) {
 			FProperty* prop = *PropIt;
 			if (!prop->HasAnyPropertyFlags(CPF_Parm))
@@ -76,8 +83,9 @@ void UPythonFunction::CallPythonCallable(FFrame& Stack, RESULT_DECL)
 	}
 	else {
 		//UE_LOG(LogPython, Warning, TEXT("BLUEPRINT CALL"));
-		frame = (uint8 *)FMemory_Alloca(function->PropertiesSize);
-		FMemory::Memzero(frame, function->PropertiesSize);
+		frame = (uint8 *)FMemory_Alloca_Aligned(function->PropertiesSize, function->GetMinAlignment());
+		function->InitializeStruct(frame);
+		owns_frame = true;
 		for (TFieldIterator<FProperty> PropIt(function); PropIt && *Stack.Code != EX_EndFunctionParms; ++PropIt) {
 			FProperty* prop = *PropIt;
 			if (!prop->HasAnyPropertyFlags(CPF_Parm))
@@ -98,10 +106,17 @@ void UPythonFunction::CallPythonCallable(FFrame& Stack, RESULT_DECL)
 		}
 	}
 
-	Stack.Code++;
+	if (Stack.Code)
+	{
+		Stack.Code++;
+	}
 
 	if (on_error || !function->py_callable) {
 		Py_DECREF(py_args);
+		if (owns_frame)
+		{
+			function->DestroyStruct(frame);
+		}
 		return;
 	}
 
@@ -109,6 +124,10 @@ void UPythonFunction::CallPythonCallable(FFrame& Stack, RESULT_DECL)
 	Py_DECREF(py_args);
 	if (!ret) {
 		unreal_engine_py_log_error();
+		if (owns_frame)
+		{
+			function->DestroyStruct(frame);
+		}
 		return;
 	}
 
@@ -120,13 +139,25 @@ void UPythonFunction::CallPythonCallable(FFrame& Stack, RESULT_DECL)
 #endif
 		if (ue_py_convert_pyobject(ret, return_property, frame, 0)) {
 			// copy value to stack result value
-			FMemory::Memcpy(RESULT_PARAM, frame + function->ReturnValueOffset, return_property->ArrayDim * return_property->GetElementSize());
+			void* return_value = frame + function->ReturnValueOffset;
+			if (RESULT_PARAM != return_value)
+			{
+				return_property->CopyCompleteValue(RESULT_PARAM, return_value);
+			}
 		}
 		else {
 			UE_LOG(LogPython, Error, TEXT("Invalid return value type for function %s"), *function->GetFName().ToString());
+			if (PyErr_Occurred())
+			{
+				unreal_engine_py_log_error();
+			}
 		}
 	}
 	Py_DECREF(ret);
+	if (owns_frame)
+	{
+		function->DestroyStruct(frame);
+	}
 }
 
 UPythonFunction::~UPythonFunction()

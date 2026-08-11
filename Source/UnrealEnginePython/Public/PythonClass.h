@@ -11,18 +11,38 @@ class UPythonClass : public UClass
 	GENERATED_BODY()
 
 public:
+	~UPythonClass()
+	{
+		if (py_constructor && Py_IsInitialized())
+		{
+			FScopePythonGIL gil;
+			Py_CLEAR(py_constructor);
+		}
+		else
+		{
+			py_constructor = nullptr;
+		}
+	}
 
 	void SetPyConstructor(PyObject *callable)
 	{
+		Py_XINCREF(callable);
+		Py_XDECREF(py_constructor);
 		py_constructor = callable;
-		Py_INCREF(py_constructor);
 	}
 
 	void CallPyConstructor(ue_PyUObject *self)
 	{
 		if (!py_constructor)
 			return;
-		PyObject *ret = PyObject_CallObject(py_constructor, Py_BuildValue("(O)", self));
+		PyObject *args = PyTuple_Pack(1, self);
+		if (!args)
+		{
+			unreal_engine_py_log_error();
+			return;
+		}
+		PyObject *ret = PyObject_CallObject(py_constructor, args);
+		Py_DECREF(args);
 		if (!ret)
 		{
 			unreal_engine_py_log_error();
@@ -32,10 +52,10 @@ public:
 	}
 
 	// __dict__ is stored here
-	ue_PyUObject *py_uobject;
+	ue_PyUObject *py_uobject = nullptr;
 
 private:
 
-	PyObject * py_constructor;
+	PyObject *py_constructor = nullptr;
 };
 

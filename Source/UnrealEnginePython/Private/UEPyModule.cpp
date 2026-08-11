@@ -156,6 +156,11 @@ static PyObject* py_unreal_engine_py_gc(PyObject* self, PyObject* args)
 
 }
 
+static PyObject* py_unreal_engine_is_in_game_thread(PyObject* self, PyObject* args)
+{
+	return PyBool_FromLong(IsInGameThread() ? 1 : 0);
+}
+
 static PyObject* py_unreal_engine_exec(PyObject* self, PyObject* args)
 {
 	char* filename = nullptr;
@@ -454,6 +459,7 @@ static PyMethodDef unreal_engine_methods[] = {
 	{ "remove_ticker", py_unreal_engine_remove_ticker, METH_VARARGS, "" },
 
 	{ "py_gc", py_unreal_engine_py_gc, METH_VARARGS, "" },
+	{ "is_in_game_thread", py_unreal_engine_is_in_game_thread, METH_NOARGS, "Return True on Unreal's game thread." },
 	// exec is a reserved keyword in python2
 #if PY_MAJOR_VERSION >= 3
 	{ "exec", py_unreal_engine_exec, METH_VARARGS, "" },
@@ -2192,6 +2198,39 @@ PyObject* ue_py_convert_property(FProperty* prop, uint8* buffer, int32 index, bo
 		return py_list;
 	}
 
+	if (auto casted_prop = CastField<FSetProperty>(prop))
+	{
+		FScriptSetHelper_InContainer set_helper(casted_prop, buffer, index);
+		PyObject* py_set = PySet_New(nullptr);
+		if (!py_set)
+		{
+			return nullptr;
+		}
+
+		for (int32 internal_index = 0; internal_index < set_helper.GetMaxIndex(); ++internal_index)
+		{
+			if (!set_helper.IsValidIndex(internal_index))
+			{
+				continue;
+			}
+
+			PyObject* item = ue_py_convert_property(
+				casted_prop->ElementProp,
+				set_helper.GetElementPtr(internal_index),
+				0,
+				copy_structs);
+			if (!item || PySet_Add(py_set, item) < 0)
+			{
+				Py_XDECREF(item);
+				Py_DECREF(py_set);
+				return nullptr;
+			}
+			Py_DECREF(item);
+		}
+
+		return py_set;
+	}
+
 #if UEP_LEGACY_ENGINE_MINOR_VERSION >= 15
 	if (auto casted_prop = CastField<FMapProperty>(prop))
 	{
@@ -2464,6 +2503,55 @@ bool ue_py_convert_pyobject(PyObject* py_obj, FProperty* prop, uint8* buffer, in
 					return false;
 				}
 			}
+			return true;
+		}
+
+		return false;
+	}
+
+	if (PyAnySet_Check(py_obj))
+	{
+		if (auto casted_prop = CastField<FSetProperty>(prop))
+		{
+			FScriptSetHelper_InContainer set_helper(casted_prop, buffer, index);
+			const Py_ssize_t set_size = PySet_Size(py_obj);
+			if (set_size < 0)
+			{
+				return false;
+			}
+
+			set_helper.EmptyElements(static_cast<int32>(set_size));
+			PyObject* iterator = PyObject_GetIter(py_obj);
+			if (!iterator)
+			{
+				return false;
+			}
+
+			PyObject* item = nullptr;
+			while ((item = PyIter_Next(iterator)))
+			{
+				const int32 internal_index = set_helper.AddDefaultValue_Invalid_NeedsRehash();
+				const bool converted = ue_py_convert_pyobject(
+					item,
+					casted_prop->ElementProp,
+					set_helper.GetElementPtr(internal_index),
+					0);
+				Py_DECREF(item);
+				if (!converted)
+				{
+					Py_DECREF(iterator);
+					set_helper.EmptyElements();
+					return false;
+				}
+			}
+			Py_DECREF(iterator);
+			if (PyErr_Occurred())
+			{
+				set_helper.EmptyElements();
+				return false;
+			}
+
+			set_helper.Rehash();
 			return true;
 		}
 
@@ -3097,7 +3185,8 @@ PyObject* ue_unbind_pyevent(ue_PyUObject* u_obj, FString event_name, PyObject* p
 
 	if (auto casted_prop = CastField<FMulticastDelegateProperty>(u_property))
 	{
-		UPythonDelegate* py_delegate = FUnrealEnginePythonHouseKeeper::Get()->FindDelegate(u_obj->ue_object, py_callable);
+		FUnrealEnginePythonHouseKeeper* housekeeper = FUnrealEnginePythonHouseKeeper::Get();
+		UPythonDelegate* py_delegate = housekeeper->FindDelegate(u_obj->ue_object, py_callable);
 		if (py_delegate != nullptr)
 		{
 			FScriptDelegate script_delegate;
@@ -3110,15 +3199,19 @@ PyObject* ue_unbind_pyevent(ue_PyUObject* u_obj, FString event_name, PyObject* p
 			void* property_value = casted_prop->ContainerPtrToValuePtr<void>(u_obj->ue_object);
 			casted_prop->RemoveDelegate(script_delegate, u_obj->ue_object, property_value);
 #endif
+			housekeeper->ReleaseDelegate(u_obj->ue_object, py_delegate);
 		}
 	}
 	else if (auto casted_prop_delegate = CastField<FDelegateProperty>(u_property))
 	{
 		FScriptDelegate script_delegate = casted_prop_delegate->GetPropertyValue_InContainer(u_obj->ue_object);
-		script_delegate.Unbind();
-
-		// re-assign multicast delegate
-		casted_prop_delegate->SetPropertyValue_InContainer(u_obj->ue_object, script_delegate);
+		UPythonDelegate* py_delegate = Cast<UPythonDelegate>(script_delegate.GetUObject());
+		if (py_delegate && py_delegate->UsesPyCallable(py_callable))
+		{
+			script_delegate.Unbind();
+			casted_prop_delegate->SetPropertyValue_InContainer(u_obj->ue_object, script_delegate);
+			FUnrealEnginePythonHouseKeeper::Get()->ReleaseDelegate(u_obj->ue_object, py_delegate);
+		}
 	}
 	else
 	{
@@ -3158,8 +3251,11 @@ PyObject* ue_bind_pyevent(ue_PyUObject* u_obj, FString event_name, PyObject* py_
 	}
 	else if (auto casted_prop_delegate = CastField<FDelegateProperty>(u_property))
 	{
-
 		FScriptDelegate script_delegate = casted_prop_delegate->GetPropertyValue_InContainer(u_obj->ue_object);
+		if (UPythonDelegate* existing_delegate = Cast<UPythonDelegate>(script_delegate.GetUObject()))
+		{
+			FUnrealEnginePythonHouseKeeper::Get()->ReleaseDelegate(u_obj->ue_object, existing_delegate);
+		}
 		UPythonDelegate* py_delegate = FUnrealEnginePythonHouseKeeper::Get()->NewDelegate(u_obj->ue_object, py_callable, casted_prop_delegate->SignatureFunction);
 		// fake UFUNCTION for bypassing checks
 		script_delegate.BindUFunction(py_delegate, FName("PyFakeCallable"));

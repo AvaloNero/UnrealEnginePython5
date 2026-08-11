@@ -15,6 +15,7 @@ public:
 	~UPythonDelegate();
 	virtual void ProcessEvent(UFunction *function, void *Parms) override;
 	void SetPyCallable(PyObject *callable);
+	void ClearPyCallable();
     bool UsesPyCallable(PyObject *callable);
 	void SetSignature(UFunction *original_signature);
 

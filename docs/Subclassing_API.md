@@ -1,6 +1,6 @@
 # Native subclassing API
 
-UnrealEnginePython 0.2.0 restores runtime Python subclass generation for Unreal
+UnrealEnginePython 0.3.0 supports runtime Python subclass generation for Unreal
 Engine 5.8. A Python class that derives from an imported Unreal class produces a
 transient `UClass`; declared fields become UE5 `FProperty` objects and annotated
 methods become reflected `UFunction` objects.
@@ -48,7 +48,7 @@ Declare a property by assigning an imported Unreal property type on the Python
 class:
 
 ```python
-from unreal_engine.classes import Actor, BoolProperty, FloatProperty, IntProperty
+from unreal_engine.classes import Actor, BoolProperty, FloatProperty, IntProperty, StrProperty
 
 
 class PropertyExample(Actor):
@@ -56,12 +56,15 @@ class PropertyExample(Actor):
     Count = IntProperty
     Weight = FloatProperty
     Samples = [FloatProperty]
+    Tags = {StrProperty}
     Target = Actor
-    Scores = {str: IntProperty}
+    Scores = {StrProperty: IntProperty}
 ```
 
 The UE 5.8 path supports scalar properties, arrays, maps, object references,
-structs and enums. Generic `TSet` marshalling is not part of the 0.2.0 contract.
+structs and enums. A one-element Python set declares `TSet<ElementProperty>`;
+runtime reads return a Python `set`, while writes accept `set` or `frozenset`.
+Set elements and map keys must map to a UE property type with a value hash.
 
 ## Reflected functions and overrides
 
@@ -88,7 +91,7 @@ class EventExample(Actor):
 ```
 
 The parent function must be an overridable reflected function. In particular,
-the 0.2.0 validation suite exercises a real `BlueprintNativeEvent` override,
+the 0.3.0 validation suite exercises a real `BlueprintNativeEvent` override,
 not only a newly declared Python function.
 
 The legacy metadata flags remain available for new reflected methods:
@@ -137,12 +140,15 @@ appropriate Unreal attachment function instead.
 - Keep referenced transient assets rooted for the same reason when the class
   stores them as defaults.
 - Defining a second generated class with the same Unreal name in one process is
-  rejected. Class hot redefinition/reload is not supported in 0.2.0; restart
+  rejected. Class hot redefinition/reload is not supported in 0.3.0; restart
   the process to recreate it.
 - UObject access belongs on Unreal's game thread. Python worker threads must not
   mutate UObjects.
 - Python exceptions raised by reflected callbacks are reported to the Unreal
   log. Gameplay code should keep callbacks small and handle recoverable errors.
+
+See `Lifecycle_Threading_API.md` for the complete interpreter, callback,
+exception and worker-thread contract.
 
 See the complete Python-first character, controller and GameMode implementation
 in `Demos/UEPPythonThirdPerson/Overlay/Content/Scripts/uep_python_third_person.py`.

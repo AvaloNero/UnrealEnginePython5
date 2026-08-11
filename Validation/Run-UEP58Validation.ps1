@@ -66,7 +66,8 @@ function Invoke-CheckedProcess {
         [Parameter(Mandatory = $true)][string]$Label,
         [Parameter(Mandatory = $true)][string]$WorkingDirectory,
         [int]$TimeoutSeconds = 0,
-        [hashtable]$EnvironmentVariables = @{}
+        [hashtable]$EnvironmentVariables = @{},
+        [int[]]$AllowedExitCodes = @(0)
     )
 
     Write-Host "[$Label] $(Format-ProcessCommand $FilePath $ArgumentList)"
@@ -100,8 +101,8 @@ function Invoke-CheckedProcess {
             $process.WaitForExit()
         }
 
-        if ($process.ExitCode -ne 0) {
-            throw "$Label exited with code $($process.ExitCode)"
+        if ($AllowedExitCodes -notcontains $process.ExitCode) {
+			throw "$Label exited with code $($process.ExitCode); allowed exit codes: $($AllowedExitCodes -join ', ')"
         }
     }
     finally {
@@ -182,6 +183,32 @@ function Assert-ValidationResult {
         if ($logContents.Contains($pattern)) {
             throw "Validation log contains '$pattern': $LogPath"
         }
+    }
+
+    return $report
+}
+
+function Assert-ExpectedExceptionResult {
+    param(
+        [Parameter(Mandatory = $true)][string]$ResultPath,
+        [Parameter(Mandatory = $true)][string]$LogPath
+    )
+
+    $report = Assert-ValidationResult $ResultPath $LogPath "UEP_EXCEPTION_VALIDATION_PASSED"
+    $logLines = Get-Content -LiteralPath $LogPath
+    $errorLines = @($logLines | Where-Object { $_ -match "Log[^:\s]+:\s+Error:" })
+    if ($errorLines.Count -eq 0) {
+        throw "Expected dynamic Python exception was not logged: $LogPath"
+    }
+
+    $allowedErrorPattern = "LogPython:\s+Error:.*(?:UEP_EXPECTED_DYNAMIC_EXCEPTION|Traceback \(most recent call last\):|MaybeFail|RuntimeError:)"
+    $unexpectedErrorLines = @($errorLines | Where-Object { $_ -notmatch $allowedErrorPattern })
+    if ($unexpectedErrorLines.Count -gt 0) {
+        throw "Exception validation produced unexpected error line(s): $($unexpectedErrorLines -join '; ')"
+    }
+
+    if (!(Get-Content -LiteralPath $LogPath -Raw).Contains("RuntimeError: UEP_EXPECTED_DYNAMIC_EXCEPTION")) {
+        throw "Expected Python exception text is missing from $LogPath"
     }
 
     return $report
@@ -273,6 +300,7 @@ try {
 
     $projectPath = Join-Path $stageRoot "UEP58Host.uproject"
     $coreScript = Join-Path $stageRoot "Tests\core_validation.py"
+	$exceptionScript = Join-Path $stageRoot "Tests\exception_validation.py"
     $editorScript = Join-Path $stageRoot "Tests\editor_validation.py"
     $commonBuildArguments = @(
         "Win64",
@@ -343,6 +371,32 @@ try {
         $reports.Add((Assert-ValidationResult $resultPath $logPath))
     }
 
+	foreach ($mode in @("shared", "standalone")) {
+		$resultPath = Join-Path $resultRoot "exception-$mode.json"
+		$logPath = Join-Path $resultRoot "exception-$mode.log"
+		$arguments = @(
+			$projectPath,
+			"-unattended",
+			"-nop4",
+			"-NullRHI",
+			"-NoSound",
+			"-NoSplash",
+			"-UTF8Output",
+			"-DisablePlugins=AndroidFileServer",
+			"-run=Py",
+			$exceptionScript,
+			"-UEPValidationMode=$mode",
+			"-UEPValidationResult=$resultPath",
+			"-abslog=$logPath"
+		)
+		if ($mode -eq "standalone") {
+			$arguments += "-DisablePython"
+		}
+
+		Invoke-CheckedProcess -FilePath $editorCmdPath -ArgumentList $arguments -Label "Exception boundary $mode" -WorkingDirectory $stageRoot -TimeoutSeconds 300 -AllowedExitCodes @(0, 1)
+		$reports.Add((Assert-ExpectedExceptionResult $resultPath $logPath))
+	}
+
     $editorResultPath = Join-Path $resultRoot "editor.json"
     $editorLogPath = Join-Path $resultRoot "editor.log"
     $editorArguments = @(
@@ -360,7 +414,11 @@ try {
         "-abslog=$editorLogPath"
     )
     $validationAssetPath = Join-Path $stageRoot "Content\UEPValidation\M_UEP58Validation.uasset"
-    Assert-PathIsUnder -Path $validationAssetPath -Parent $stageRoot
+	$validationSequenceAssetPath = Join-Path $stageRoot "Content\UEPValidation\LS_UEP58Validation.uasset"
+	$validationAssetPaths = @($validationAssetPath, $validationSequenceAssetPath)
+	foreach ($assetPath in $validationAssetPaths) {
+		Assert-PathIsUnder -Path $assetPath -Parent $stageRoot
+	}
     try {
         Invoke-CheckedProcess -FilePath $editorPath -ArgumentList $editorArguments -Label "Editor and Slate" -WorkingDirectory $stageRoot -TimeoutSeconds 600
         $reports.Add((Assert-ValidationResult $editorResultPath $editorLogPath))
@@ -369,9 +427,11 @@ try {
         # ObjectTools::DeleteObjects performs an unbounded reference scan in
         # this UE5.8 unattended host. The asset lives only in the guarded
         # staging project, so clean up its exact file after the editor exits.
-        if (Test-Path -LiteralPath $validationAssetPath -PathType Leaf) {
-            Remove-Item -LiteralPath $validationAssetPath -Force
-        }
+		foreach ($assetPath in $validationAssetPaths) {
+			if (Test-Path -LiteralPath $assetPath -PathType Leaf) {
+				Remove-Item -LiteralPath $assetPath -Force
+			}
+		}
     }
 
     $packagedExecutable = $null

@@ -14,8 +14,24 @@ UPythonDelegate::UPythonDelegate()
 void UPythonDelegate::SetPyCallable(PyObject *callable)
 {
 	// do not acquire the gil here as we set the callable in python call themselves
+	Py_XINCREF(callable);
+	Py_XDECREF(py_callable);
 	py_callable = callable;
-	Py_INCREF(py_callable);
+}
+
+void UPythonDelegate::ClearPyCallable()
+{
+	if (!py_callable)
+	{
+		return;
+	}
+	if (Py_IsInitialized())
+	{
+		FScopePythonGIL gil;
+		Py_CLEAR(py_callable);
+		return;
+	}
+	py_callable = nullptr;
 }
 
 void UPythonDelegate::SetSignature(UFunction *original_signature)
@@ -150,12 +166,7 @@ bool UPythonDelegate::UsesPyCallable(PyObject *other)
 
 UPythonDelegate::~UPythonDelegate()
 {
-	if (Py_IsInitialized())
-	{
-		FScopePythonGIL gil;
-		Py_XDECREF(py_callable);
-	}
-	py_callable = nullptr;
+	ClearPyCallable();
 #if defined(UEPY_MEMORY_DEBUG)
 	UE_LOG(LogPython, Warning, TEXT("PythonDelegate %p callable XDECREF'ed"), this);
 #endif

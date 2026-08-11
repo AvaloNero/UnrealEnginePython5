@@ -1,4 +1,5 @@
 #include "UEPyAnimSequence.h"
+#include "UObject/UnrealType.h"
 
 #if WITH_EDITOR && ENGINE_MAJOR_VERSION >= 5
 #include "Animation/AnimData/IAnimationDataController.h"
@@ -459,7 +460,7 @@ PyObject *py_ue_set_blend_parameter(ue_PyUObject * self, PyObject * args)
 
 	int index;
 	PyObject *py_blend;
-	if (!PyArg_ParseTuple(args, "iO:get_blend_parameter", &index, &py_blend))
+	if (!PyArg_ParseTuple(args, "iO:set_blend_parameter", &index, &py_blend))
 		return nullptr;
 
 	UBlendSpace *blend = ue_py_check_type<UBlendSpace>(self);
@@ -473,9 +474,18 @@ PyObject *py_ue_set_blend_parameter(ue_PyUObject * self, PyObject * args)
 	if (!parameter)
 		return PyErr_Format(PyExc_Exception, "argument is not a FBlendParameter");
 
-	const FBlendParameter & orig_parameter = blend->GetBlendParameter(index);
+	FStructProperty* blend_parameters_property = FindFProperty<FStructProperty>(
+		UBlendSpace::StaticClass(),
+		TEXT("BlendParameters"));
+	if (!blend_parameters_property ||
+		blend_parameters_property->Struct != FBlendParameter::StaticStruct() ||
+		index >= blend_parameters_property->ArrayDim)
+	{
+		return PyErr_Format(PyExc_RuntimeError, "unable to resolve UBlendSpace.BlendParameters");
+	}
 
-	FMemory::Memcpy((uint8 *)&orig_parameter, parameter, FBlendParameter::StaticStruct()->GetStructureSize());
+	FBlendParameter* destination = blend_parameters_property->ContainerPtrToValuePtr<FBlendParameter>(blend, index);
+	FBlendParameter::StaticStruct()->CopyScriptStruct(destination, parameter);
 
 	Py_RETURN_NONE;
 }

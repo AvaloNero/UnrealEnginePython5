@@ -1,0 +1,37 @@
+name: UE 5.8 Linux validation
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "dev/release-*"
+    paths:
+      - ".github/workflows/ue58-linux-validation.yml"
+      - "Config/**"
+      - "Resources/**"
+      - "Source/**"
+      - "Validation/**"
+      - "UnrealEnginePython.uplugin"
+
+jobs:
+  build-and-run:
+    name: Build and run on UE 5.8 Linux
+    runs-on: [self-hosted, linux, unreal-engine-5.8]
+    timeout-minutes: 120
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Validate plugin
+        shell: bash
+        env:
+          UE_ENGINE_ROOT: ${{ vars.UE_ENGINE_ROOT }}
+        run: bash Validation/Run-UEP58LinuxValidation.sh
+
+      - name: Upload validation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: uep58-linux-validation
+          path: .build/Validation/Linux/Results
+          if-no-files-found: warn

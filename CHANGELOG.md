@@ -3,6 +3,65 @@
 This file records the UE5 port maintained in this repository. The historical
 UE4 project history remains available in Git.
 
+## [0.3.0] - 2026-08-11
+
+### Added
+
+- Generic reflected `TSet` conversion between Unreal properties and Python
+  `set`/`frozenset`, including dynamic `{ElementProperty}` declarations and
+  hashability validation.
+- `unreal_engine.is_in_game_thread()` for explicit thread-policy checks.
+- Separate shared/standalone exception-boundary suites, dynamic function stress
+  coverage, duplicate-class reload-contract checks and callback weak-reference
+  lifetime tests.
+- Runtime wrapper tests for animation parameter round trips and local UDP
+  receiver lifecycle, plus editor tests for Level Sequence tracks, sections,
+  folders and asset persistence.
+- A UE5.8 platform-readiness probe and a self-hosted Linux build/runtime lane.
+  Linux support remains unclaimed until that lane has a green artifact.
+- Commit-addressed source archives, SHA-256 manifests and optional UE5.8
+  `BuildPlugin` binary packaging.
+
+### Changed
+
+- Explicit delegate and Enhanced Input unbinding now releases the corresponding
+  Python callable immediately instead of retaining it until owner garbage
+  collection.
+- Dynamic Python constructors/functions now replace callable references safely;
+  non-trivial call frames are initialized/destroyed through reflection and
+  return values use `FProperty::CopyCompleteValue` instead of byte copies.
+- Dynamic class flag inspection no longer leaks temporary Python references and
+  duplicate class creation remains an explicit restart-required error.
+- The UDP socket wrapper validates addresses, ports and buffers, initializes its
+  native pointers, protects closed sockets and supports idempotent close.
+- `BlendSpace.set_blend_parameter()` now deep-copies the reflected
+  `FBlendParameter` instead of byte-copying its `FString`, eliminating heap
+  aliasing and the packaged shutdown corruption found by the combined wrapper
+  and dynamic-string stress run.
+- Core validation promotes `TSet` from a known exclusion and keeps expected
+  Python exceptions in a dedicated, strictly filtered process lane.
+
+### Validation
+
+- The Win64 quick matrix passes 47 checks: 20 shared core, 20 standalone core,
+  two exception-boundary recovery checks and five editor/Slate/Sequencer checks.
+- The full Win64 gate additionally runs the 20 core checks in a cooked packaged
+  executable, for 67 required checks total. Full result `20260811-153622`
+  passed with an orderly CPython/object-subsystem shutdown and exit code 0;
+  independent scans found no fatal, compiler or unexpected error diagnostics.
+- UE5.8.0 reports the local Linux platform as not ready because
+  `v26_clang-20.1.8-rockylinux8` is not installed. This is recorded as a
+  platform limitation, not a passing Linux result.
+- Unreal Engine source remains unchanged.
+
+### Known limitations
+
+- Dynamic `UClass` redefinition is restart-required; in-process class hot reload
+  is not supported.
+- UObject/reflection operations are supported only on Unreal's game thread.
+- Linux has an automated lane but no release-level green artifact yet.
+- Lyra authority, replication and Game Feature integration begin in 0.4.0.
+
 ## [0.2.0] - 2026-08-11
 
 ### Added

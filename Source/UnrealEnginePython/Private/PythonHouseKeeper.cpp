@@ -186,7 +186,11 @@ int32 FUnrealEnginePythonHouseKeeper::DelegatesGC()
         FPythonDelegateTracker &Tracker = PyDelegatesTracker[i];
         if (!Tracker.Owner.IsValid(true))
         {
-            Tracker.Delegate->RemoveFromRoot();
+			Tracker.Delegate->ClearPyCallable();
+			if (Tracker.Delegate->IsRooted())
+			{
+				Tracker.Delegate->RemoveFromRoot();
+			}
             PyDelegatesTracker.RemoveAt(i);
             Garbaged++;
         }
@@ -232,7 +236,32 @@ UPythonDelegate *FUnrealEnginePythonHouseKeeper::NewDelegate(UObject *Owner, PyO
     FPythonDelegateTracker Tracker(Delegate, Owner);
     PyDelegatesTracker.Add(Tracker);
 
-    return Delegate;
+	return Delegate;
+}
+
+bool FUnrealEnginePythonHouseKeeper::ReleaseDelegate(UObject *Owner, UPythonDelegate *Delegate)
+{
+	if (!Delegate)
+	{
+		return false;
+	}
+
+	for (int32 i = PyDelegatesTracker.Num() - 1; i >= 0; --i)
+	{
+		FPythonDelegateTracker& Tracker = PyDelegatesTracker[i];
+		if (Tracker.Owner.Get() == Owner && Tracker.Delegate == Delegate)
+		{
+			Delegate->ClearPyCallable();
+			if (Delegate->IsRooted())
+			{
+				Delegate->RemoveFromRoot();
+			}
+			PyDelegatesTracker.RemoveAt(i);
+			return true;
+		}
+	}
+
+	return false;
 }
 
 TSharedRef<FPythonSlateDelegate> FUnrealEnginePythonHouseKeeper::NewSlateDelegate(TSharedRef<SWidget> Owner, PyObject *PyCallable)

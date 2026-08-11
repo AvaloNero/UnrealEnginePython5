@@ -50,7 +50,7 @@ unchanged template overlay continued to pass its regression smoke test.
 
 ## 0.3.0 — API and platform hardening
 
-Status: next.
+Status: complete.
 
 - Add generic `TSet` property marshalling and promote it into the required core
   suite.
@@ -61,9 +61,23 @@ Status: next.
   broader platform support.
 - Define reproducible source and optional binary release packaging.
 
+Acceptance gate: the six-suite Win64 matrix passes all 67 required checks,
+including cooked packaged execution and orderly interpreter/process shutdown;
+the wrapper audit has behavioral coverage, platform claims match retained
+artifacts, and release archives are generated from a clean named commit.
+
+Completed gate: UE 5.8.0 and CPython 3.11.8 passed 20 shared core, 20
+standalone core, two isolated exception-boundary, five editor and 20 packaged
+core checks in full result `20260811-153622`. The run exposed and fixed a
+`BlendSpace` parameter shallow-copy shutdown corruption, then completed with
+zero fatal, compiler or unexpected error diagnostics and process exit code 0.
+Linux remains explicitly unclaimed: readiness result `20260811-154243` reports
+the required `v26_clang-20.1.8-rockylinux8` SDK is not installed locally.
+
 ## 0.4.0 — Lyra integration
 
-Status: planned after 0.3.0 hardening is complete.
+Status: next; source integration can proceed, while content-dependent gates
+require a complete Launcher/Marketplace Lyra project.
 
 - Start with a capability audit of Lyra's Game Feature plugins, modular gameplay,
   Enhanced Input, Gameplay Ability System, asset management and multiplayer

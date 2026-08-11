@@ -3,15 +3,16 @@
 
 ## Unreal Engine 5.8 port
 
-**Current version: 0.2.0**
+**Current version: 0.3.0**
 
-Version 0.2.0 extends the first tested UE5 baseline with runtime Python subclass
-generation and a Python-first Third Person sample. It targets **Unreal Engine
-5.8**, uses the engine-bundled **CPython 3.11** through UnrealBuildTool's
-`Python3` module, and does not require changes to Unreal Engine source code.
-Windows/Win64 is the currently validated platform.
+Version 0.3.0 hardens the UE5 runtime binding after the Python-first Third
+Person milestone. It targets **Unreal Engine 5.8**, uses the engine-bundled
+**CPython 3.11** through UnrealBuildTool's `Python3` module, and does not require
+changes to Unreal Engine source code. Windows/Win64 remains the release-validated
+platform; a Linux lane is provided but is not a support claim until it produces
+a green UE5.8 build/runtime artifact.
 
-### 0.2.0 support contract
+### 0.3.0 support contract
 
 The release baseline includes:
 
@@ -22,14 +23,23 @@ The release baseline includes:
   Actor, asset and Slate coverage on Python 3.11;
 * dynamic Python `UClass`, `FProperty` and `UFunction` generation on UE5's
   `FField` model, including reflected parent-event overrides;
+* scalar, struct, object, array, map and generic `TSet` property marshalling;
 * Enhanced Input mapping, action binding/removal and deterministic input
   injection adapters;
+* immediate Python callback release after explicit delegate or Enhanced Input
+  unbinding, safe dynamic string returns, exception recovery checks and a
+  game-thread diagnostic;
 * sharing the process interpreter when Epic's `PythonScriptPlugin` owns it, or
   initializing the engine interpreter when that plugin is disabled;
-* a packaged Win64 runtime test with UEP-owned Python; and
+* runtime audits for animation (including deep-copied `BlendSpace` parameters)
+  and local UDP socket lifecycles plus editor audits for assets, Sequencer and
+  Slate ownership;
+* a packaged Win64 runtime test with UEP-owned Python;
 * a visible and packaged Third Person sample whose character, controller,
   GameMode, camera, keyboard/mouse input and locomotion state are driven by
-  Python.
+  Python; and
+* deterministic Git source archives, checksums and optional UE5.8 `BuildPlugin`
+  binary artifacts.
 
 The repeatable acceptance project and one-command build/test/package workflow
 are documented in [`Validation/README.md`](Validation/README.md). The sample is
@@ -39,19 +49,24 @@ documented in [`Demos/README.md`](Demos/README.md). See
 APIs. See
 [`CHANGELOG.md`](CHANGELOG.md) for the release contents and
 [`ROADMAP.md`](ROADMAP.md) for the completed Python-first milestone and later
-hardening/Lyra work.
+Lyra work. Lifecycle/thread rules, platform status and release packaging are in
+[`docs/Lifecycle_Threading_API.md`](docs/Lifecycle_Threading_API.md),
+[`docs/Platform_Support.md`](docs/Platform_Support.md), and
+[`Packaging/README.md`](Packaging/README.md).
 
-### Known 0.2.0 boundaries
+### Known 0.3.0 boundaries
 
-Generic `TSet` property marshalling is not implemented. Release-level runtime
-validation remains Win64-only, and the Third Person parity contract covers
-keyboard/mouse rather than the template's mobile touch UI. Lyra, multiplayer
-authority/replication and broader platform hardening remain later milestones.
+Release-level runtime validation remains Win64-only. The local UE5.8 install
+reports that the Linux `v26_clang-20.1.8-rockylinux8` SDK is unavailable, so
+Linux is not represented as tested. Dynamic generated classes require a process
+restart for redefinition, UObject access remains game-thread-only, and the Third
+Person parity contract covers keyboard/mouse rather than the template's mobile
+touch UI. Lyra and multiplayer authority/replication remain later milestones.
 
 To use this source release, place the plugin under a UE 5.8 project's `Plugins`
 directory, regenerate project files, and build it with that UE 5.8 installation.
 The remainder of this README is preserved upstream documentation and may describe
-legacy UE4 or external-Python behavior outside the 0.2.0 support contract above.
+legacy UE4 or external-Python behavior outside the 0.3.0 support contract above.
 
 ## Original upstream documentation
 

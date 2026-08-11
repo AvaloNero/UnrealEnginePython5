@@ -61,6 +61,28 @@ static bool UEPyResolvePropertyDeclaration(
 	return false;
 }
 
+static int UEPyApplyCallableFlag(PyObject* callable, const char* attribute, uint32 flag, uint32& flags)
+{
+	PyObject* value = PyObject_GetAttrString(callable, attribute);
+	if (!value)
+	{
+		PyErr_Clear();
+		return 0;
+	}
+
+	const int enabled = PyObject_IsTrue(value);
+	Py_DECREF(value);
+	if (enabled < 0)
+	{
+		return -1;
+	}
+	if (enabled)
+	{
+		flags |= flag;
+	}
+	return 0;
+}
+
 static int UEPyTryAddClassProperty(ue_PyUObject* self, const char* name, PyObject* value)
 {
 	FFieldClass* first_field_class = nullptr;
@@ -80,6 +102,34 @@ static int UEPyTryAddClassProperty(ue_PyUObject* self, const char* name, PyObjec
 	{
 		declaration = PyList_New(1);
 		PyList_SET_ITEM(declaration, 0, ue_py_new_ffield_class_capsule(first_field_class));
+		call_args = PyTuple_New(first_metadata ? 3 : 2);
+	}
+	else if (PyAnySet_Check(value) && PySet_Size(value) == 1)
+	{
+		PyObject* iterator = PyObject_GetIter(value);
+		PyObject* item = iterator ? PyIter_Next(iterator) : nullptr;
+		Py_XDECREF(iterator);
+		if (!item)
+		{
+			return PyErr_Occurred() ? -1 : 0;
+		}
+
+		const bool resolved = UEPyResolvePropertyDeclaration(item, first_field_class, first_metadata);
+		Py_DECREF(item);
+		if (!resolved)
+		{
+			return 0;
+		}
+
+		declaration = PySet_New(nullptr);
+		PyObject* capsule = ue_py_new_ffield_class_capsule(first_field_class);
+		if (!declaration || !capsule || PySet_Add(declaration, capsule) < 0)
+		{
+			Py_XDECREF(capsule);
+			Py_XDECREF(declaration);
+			return -1;
+		}
+		Py_DECREF(capsule);
 		call_args = PyTuple_New(first_metadata ? 3 : 2);
 	}
 	else if (PyDict_Check(value) && PyDict_Size(value) == 1)
@@ -143,9 +193,16 @@ int unreal_engine_py_init(ue_PyUObject *self, PyObject *args, PyObject *kwds)
 	if (PyTuple_Size(args) == 3)
 	{
 		// TODO make it smarter on error checking
-		UE_LOG(LogPython, Warning, TEXT("%s"), UTF8_TO_TCHAR(UEPyUnicode_AsUTF8(PyObject_Str(PyTuple_GetItem(args, 0)))));
-		UE_LOG(LogPython, Warning, TEXT("%s"), UTF8_TO_TCHAR(UEPyUnicode_AsUTF8(PyObject_Str(PyTuple_GetItem(args, 1)))));
-		UE_LOG(LogPython, Warning, TEXT("%s"), UTF8_TO_TCHAR(UEPyUnicode_AsUTF8(PyObject_Str(PyTuple_GetItem(args, 2)))));
+		for (Py_ssize_t index = 0; index < 3; ++index)
+		{
+			PyObject* description = PyObject_Str(PyTuple_GetItem(args, index));
+			if (!description)
+			{
+				return -1;
+			}
+			UE_LOG(LogPython, Warning, TEXT("%s"), UTF8_TO_TCHAR(UEPyUnicode_AsUTF8(description)));
+			Py_DECREF(description);
+		}
 
 		PyObject *parents = PyTuple_GetItem(args, 1);
 		ue_PyUObject *parent = (ue_PyUObject *)PyTuple_GetItem(parents, 0);
@@ -168,25 +225,42 @@ int unreal_engine_py_init(ue_PyUObject *self, PyObject *args, PyObject *kwds)
 		FUnrealEnginePythonHouseKeeper::Get()->RegisterPyUObject(new_class, self);
 
 		PyObject *py_additional_properties = PyDict_New();
+		if (!py_additional_properties)
+		{
+			return -1;
+		}
 
 		PyObject *class_attributes_keys = PyObject_GetIter(class_attributes);
+		if (!class_attributes_keys)
+		{
+			Py_DECREF(py_additional_properties);
+			return -1;
+		}
 		for (;;)
 		{
 			PyObject *key = PyIter_Next(class_attributes_keys);
 			if (!key)
 			{
 				if (PyErr_Occurred())
+				{
+					Py_DECREF(class_attributes_keys);
+					Py_DECREF(py_additional_properties);
 					return -1;
+				}
 				break;
 			}
 			if (!PyUnicodeOrString_Check(key))
+			{
+				Py_DECREF(key);
 				continue;
+			}
 			const char *class_key = UEPyUnicode_AsUTF8(key);
 
 			PyObject *value = PyDict_GetItem(class_attributes, key);
 
 			if (strlen(class_key) > 2 && class_key[0] == '_' && class_key[1] == '_')
 			{
+				Py_DECREF(key);
 				continue;
 			}
 
@@ -204,6 +278,9 @@ int unreal_engine_py_init(ue_PyUObject *self, PyObject *args, PyObject *kwds)
 				if (add_property_result < 0)
 				{
 					unreal_engine_py_log_error();
+					Py_DECREF(key);
+					Py_DECREF(class_attributes_keys);
+					Py_DECREF(py_additional_properties);
 					return -1;
 				}
 				prop_added = add_property_result > 0;
@@ -213,72 +290,39 @@ int unreal_engine_py_init(ue_PyUObject *self, PyObject *args, PyObject *kwds)
 			if (!prop_added && PyCallable_Check(value) && class_key[0] >= 'A' && class_key[0] <= 'Z')
 			{
 				uint32 func_flags = FUNC_Native | FUNC_BlueprintCallable | FUNC_Public;
-				PyObject *is_event = PyObject_GetAttrString(value, (char *)"event");
-				if (is_event && PyObject_IsTrue(is_event))
+				if (UEPyApplyCallableFlag(value, "event", FUNC_Event | FUNC_BlueprintEvent, func_flags) < 0 ||
+					UEPyApplyCallableFlag(value, "multicast", FUNC_NetMulticast, func_flags) < 0 ||
+					UEPyApplyCallableFlag(value, "server", FUNC_NetServer, func_flags) < 0 ||
+					UEPyApplyCallableFlag(value, "client", FUNC_NetClient, func_flags) < 0 ||
+					UEPyApplyCallableFlag(value, "reliable", FUNC_NetReliable, func_flags) < 0 ||
+					UEPyApplyCallableFlag(value, "pure", FUNC_BlueprintPure, func_flags) < 0 ||
+					UEPyApplyCallableFlag(value, "static", FUNC_Static, func_flags) < 0)
 				{
-					func_flags |= FUNC_Event | FUNC_BlueprintEvent;
+					unreal_engine_py_log_error();
+					Py_DECREF(key);
+					Py_DECREF(class_attributes_keys);
+					Py_DECREF(py_additional_properties);
+					return -1;
 				}
-				else if (!is_event)
-					PyErr_Clear();
 
-				PyObject *is_multicast = PyObject_GetAttrString(value, (char *)"multicast");
-				if (is_multicast && PyObject_IsTrue(is_multicast))
-				{
-					func_flags |= FUNC_NetMulticast;
-				}
-				else if (!is_multicast)
-					PyErr_Clear();
-				PyObject *is_server = PyObject_GetAttrString(value, (char *)"server");
-				if (is_server && PyObject_IsTrue(is_server))
-				{
-					func_flags |= FUNC_NetServer;
-				}
-				else if (!is_server)
-					PyErr_Clear();
-				PyObject *is_client = PyObject_GetAttrString(value, (char *)"client");
-				if (is_client && PyObject_IsTrue(is_client))
-				{
-					func_flags |= FUNC_NetClient;
-				}
-				else if (!is_client)
-					PyErr_Clear();
-				PyObject *is_reliable = PyObject_GetAttrString(value, (char *)"reliable");
-				if (is_reliable && PyObject_IsTrue(is_reliable))
-				{
-					func_flags |= FUNC_NetReliable;
-				}
-				else if (!is_reliable)
-					PyErr_Clear();
-
-
-				PyObject *is_pure = PyObject_GetAttrString(value, (char *)"pure");
-				if (is_pure && PyObject_IsTrue(is_pure))
-				{
-					func_flags |= FUNC_BlueprintPure;
-				}
-				else if (!is_pure)
-					PyErr_Clear();
-				PyObject *is_static = PyObject_GetAttrString(value, (char *)"static");
-				if (is_static && PyObject_IsTrue(is_static))
-				{
-					func_flags |= FUNC_Static;
-				}
-				else if (!is_static)
-					PyErr_Clear();
 				PyObject *override_name = PyObject_GetAttrString(value, (char *)"override");
 				if (override_name && PyUnicodeOrString_Check(override_name))
 				{
 					class_key = UEPyUnicode_AsUTF8(override_name);
 				}
-				else if (override_name && PyUnicodeOrString_Check(override_name))
-				{
-					class_key = UEPyUnicode_AsUTF8(override_name);
-				}
 				else if (!override_name)
-					PyErr_Clear();
-				if (!unreal_engine_add_function(new_class, (char *)class_key, value, func_flags))
 				{
-					UE_LOG(LogPython, Error, TEXT("unable to add function %s"), UTF8_TO_TCHAR(class_key));
+					PyErr_Clear();
+				}
+				const FString function_name = UTF8_TO_TCHAR(class_key);
+				const bool function_added = unreal_engine_add_function(new_class, (char *)class_key, value, func_flags) != nullptr;
+				Py_XDECREF(override_name);
+				if (!function_added)
+				{
+					UE_LOG(LogPython, Error, TEXT("unable to add function %s"), *function_name);
+					Py_DECREF(key);
+					Py_DECREF(class_attributes_keys);
+					Py_DECREF(py_additional_properties);
 					return -1;
 				}
 				prop_added = true;
@@ -288,14 +332,27 @@ int unreal_engine_py_init(ue_PyUObject *self, PyObject *args, PyObject *kwds)
 			if (!prop_added)
 			{
 				UE_LOG(LogPython, Warning, TEXT("Adding %s as attr"), UTF8_TO_TCHAR(class_key));
-				PyObject_SetAttr((PyObject *)self, key, value);
+				if (PyObject_SetAttr((PyObject *)self, key, value) < 0)
+				{
+					Py_DECREF(key);
+					Py_DECREF(class_attributes_keys);
+					Py_DECREF(py_additional_properties);
+					return -1;
+				}
 			}
+			Py_DECREF(key);
 		}
+		Py_DECREF(class_attributes_keys);
 
 		if (PyDict_Size(py_additional_properties) > 0)
 		{
-			PyObject_SetAttrString((PyObject *)self, (char*)"__additional_uproperties__", py_additional_properties);
+			if (PyObject_SetAttrString((PyObject *)self, (char*)"__additional_uproperties__", py_additional_properties) < 0)
+			{
+				Py_DECREF(py_additional_properties);
+				return -1;
+			}
 		}
+		Py_DECREF(py_additional_properties);
 
 		UPythonClass *new_u_py_class = (UPythonClass *)new_class;
 		// TODO: check if we can use this to decref the ue_PyUbject mapped to the class

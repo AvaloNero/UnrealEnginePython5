@@ -688,7 +688,23 @@ PyObject* py_ue_remove_enhanced_action_binding(ue_PyUObject* self, PyObject* arg
 	{
 		return PyErr_Format(PyExc_RuntimeError, "no UEnhancedInputComponent is available for this object");
 	}
-	return PyBool_FromLong(input->RemoveBindingByHandle(static_cast<uint32>(handle)) ? 1 : 0);
+
+	UPythonDelegate* delegate = nullptr;
+	for (const TUniquePtr<FEnhancedInputActionEventBinding>& binding : input->GetActionEventBindings())
+	{
+		if (binding && binding->GetHandle() == static_cast<uint32>(handle))
+		{
+			delegate = Cast<UPythonDelegate>(binding->GetUObject());
+			break;
+		}
+	}
+
+	const bool removed = input->RemoveBindingByHandle(static_cast<uint32>(handle));
+	if (removed && delegate)
+	{
+		FUnrealEnginePythonHouseKeeper::Get()->ReleaseDelegate(input, delegate);
+	}
+	return PyBool_FromLong(removed ? 1 : 0);
 }
 
 PyObject* py_ue_get_enhanced_action_binding_count(ue_PyUObject* self, PyObject* args)
