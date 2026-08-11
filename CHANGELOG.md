@@ -13,6 +13,8 @@ UE4 project history remains available in Git.
   and net-mode snapshots.
 - A Python lifecycle probe with explicit callback unbinding, game-thread checks,
   role-aware assertions, machine-readable results and orderly process shutdown.
+- `unreal_engine.request_exit()` for graceful game, commandlet and dedicated-
+  server shutdown without requiring a local `PlayerController`.
 - Lyra source/readiness drivers that stage outside the reference project,
   require UE5.8 and engine-bundled CPython 3.11, and distinguish source
   compatibility from content-dependent acceptance.
@@ -21,8 +23,8 @@ UE4 project history remains available in Git.
   dedicated-server/client authority and replication, Win64 cook/package and
   packaged CPython runtime.
 - Network-observation fields for local/remote controllers, PlayerState, pawn
-  control/roles and a readiness hold window so a server cannot terminate before
-  its validating client finishes.
+  control/roles and an explicit two-process ready/release handshake so neither
+  network role can terminate before both contracts are satisfied.
 
 ### Changed
 
@@ -36,13 +38,18 @@ UE4 project history remains available in Git.
   modules, loaded `UEPLyraBridge`, ran 12 Standalone game-world ticks on
   CPython 3.11.8 and exited 0 with zero compiler, fatal and `Log*: Error`
   diagnostics. Unreal Engine source remained unchanged.
-- Incremental regression result `20260811-174727` rebuilt the final reflected
-  network snapshot through UBT and repeated the source runtime gate
-  successfully.
-- Readiness result `20260811-180834` reports source ready but content blocked:
+- Final source regression `20260811-183357` rebuilt UEP and the reflected
+  network snapshot through UBT, passed the Standalone gate, then proved a real
+  `DedicatedServer` listening on UDP 7789 can exit cleanly through
+  `unreal_engine.request_exit()` with zero fatal or `Log*: Error` diagnostics.
+- Full generic UE5.8 regression `20260811-184425` passed all 70 required shared,
+  standalone, exception-boundary, Editor/Slate, cook/package and packaged-
+  runtime checks; the packaged process used CPython 3.11.8 and exposed the new
+  exit API.
+- Readiness result `20260811-184203` reports source ready but content blocked:
   the local Lyra Git sample contains zero assets/maps and lacks all five
   required GameFeatureData assets.
-- Full-driver negative result `20260811-180836` stopped before staging with 11
+- Full-driver negative result `20260811-184148` stopped before staging with 11
   machine-readable content blockers, proving that source-only evidence cannot
   accidentally satisfy the full acceptance lane.
 

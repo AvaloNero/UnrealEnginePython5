@@ -59,9 +59,10 @@ Lyra work. Lifecycle/thread rules, platform status and release packaging are in
 The Lyra source-integration gate is now automated on `dev/release-0.4.0` without
 changing the current 0.3.0 release claim. A disposable project-side bridge
 exposes read-only Experience, Game Feature, Enhanced Input, Ability System and
-network-role snapshots to Python while Lyra remains authoritative. A clean
-UE5.8 build/runtime result passes with UEP-owned CPython 3.11.8 and zero compiler,
-fatal or `Log*: Error` diagnostics. See
+network-role snapshots to Python while Lyra remains authoritative. Clean UE5.8
+Standalone and UDP-listening dedicated-server results pass with UEP-owned
+CPython 3.11.8, graceful `unreal_engine.request_exit()` shutdown and zero
+compiler, fatal or `Log*: Error` diagnostics. See
 [`docs/Lyra_Integration_0.4.0.md`](docs/Lyra_Integration_0.4.0.md) and
 [`Demos/UEPLyraIntegration/README.md`](Demos/UEPLyraIntegration/README.md).
 
@@ -74,7 +75,8 @@ Launcher/Marketplace Lyra project before those gates.
 The remaining gates are encoded in
 [`Validation/Run-UEP58LyraValidation.ps1`](Validation/Run-UEP58LyraValidation.ps1).
 Its `All` mode requires an external content-complete project and runs isolated
-Standalone, dedicated-server/client, cook/package and packaged-runtime checks.
+Standalone, explicitly synchronized dedicated-server/client, cook/package and
+packaged-runtime checks.
 The driver exists now, but no full-content passing result is claimed yet.
 
 ### Known 0.3.0 boundaries

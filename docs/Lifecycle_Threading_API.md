@@ -1,7 +1,8 @@
 # Lifecycle, reload, exceptions and threading
 
-This document is the UnrealEnginePython 0.3.0 runtime contract for UE 5.8 and
-CPython 3.11.
+This document records the current UnrealEnginePython runtime contract for UE
+5.8 and CPython 3.11. The released 0.3.0 baseline remains identified below;
+newer sections are explicitly marked as 0.4.0 development work.
 
 ## Interpreter ownership
 
@@ -33,6 +34,22 @@ if not ue.is_in_game_thread():
 It does not make the surrounding operation thread-safe. A practical pattern is
 for workers to put plain Python data into a queue and for a game-thread ticker
 or gameplay callback to consume that queue.
+
+## Headless process exit (0.4.0 development)
+
+`UObject.quit_game()` needs a world with a local `PlayerController`, so it is
+not a reliable shutdown primitive for dedicated servers or commandlets. Use the
+module-level exit request instead:
+
+```python
+import unreal_engine as ue
+
+ue.request_exit()
+```
+
+The default is a graceful engine-loop exit and allows UEP to close the object
+subsystem and its owned interpreter. `ue.request_exit(True)` requests a forced
+platform exit and should be reserved for an already-unrecoverable process.
 
 ## Delegate and input lifetime
 

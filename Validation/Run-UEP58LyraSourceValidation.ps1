@@ -3,6 +3,8 @@ param(
     [string]$EngineRoot = "F:\UnrealEngine",
     [string]$LyraProject,
     [string]$OutputRoot,
+    [ValidateRange(1024, 65535)]
+    [int]$ServerPort = 7789,
     [switch]$Incremental
 )
 
@@ -43,7 +45,11 @@ function Copy-FilteredTree {
     $sourcePath = Get-FullPath $Source
     $destinationPath = Get-FullPath $Destination
     New-Item -ItemType Directory -Path $destinationPath -Force | Out-Null
-    foreach ($file in [System.IO.Directory]::EnumerateFiles($sourcePath, "*", [System.IO.SearchOption]::AllDirectories)) {
+    $enumerationOptions = [System.IO.EnumerationOptions]::new()
+    $enumerationOptions.RecurseSubdirectories = $true
+    $enumerationOptions.IgnoreInaccessible = $false
+    $enumerationOptions.AttributesToSkip = [System.IO.FileAttributes]::ReparsePoint
+    foreach ($file in [System.IO.Directory]::EnumerateFiles($sourcePath, "*", $enumerationOptions)) {
         $relativePath = [System.IO.Path]::GetRelativePath($sourcePath, $file)
         $segments = @($relativePath -split "[\\/]")
         if (@($segments | Where-Object { $ExcludedSegments -contains $_ }).Count -gt 0) {
@@ -85,10 +91,11 @@ function Invoke-LoggedProcess {
     try {
         $stdoutTask = $process.StandardOutput.ReadToEndAsync()
         $stderrTask = $process.StandardError.ReadToEndAsync()
+        $timedOut = $false
         if ($TimeoutSeconds -gt 0 -and !$process.WaitForExit($TimeoutSeconds * 1000)) {
             $process.Kill($true)
             $process.WaitForExit()
-            throw "$Label timed out after $TimeoutSeconds seconds"
+            $timedOut = $true
         }
         if ($TimeoutSeconds -le 0) {
             $process.WaitForExit()
@@ -96,6 +103,9 @@ function Invoke-LoggedProcess {
         $stdout = $stdoutTask.GetAwaiter().GetResult()
         $stderr = $stderrTask.GetAwaiter().GetResult()
         @($stdout, $stderr) -join [Environment]::NewLine | Set-Content -LiteralPath $LogPath -Encoding utf8
+        if ($timedOut) {
+            throw "$Label timed out after $TimeoutSeconds seconds; log: $LogPath"
+        }
         $result = [ordered]@{
             exit_code = $process.ExitCode
             duration_seconds = [math]::Round(((Get-Date) - $startedAt).TotalSeconds, 3)
@@ -108,6 +118,66 @@ function Invoke-LoggedProcess {
     }
     finally {
         $process.Dispose()
+    }
+}
+
+function Assert-BuildLog {
+    param([Parameter(Mandatory = $true)][string]$LogPath)
+    $contents = Get-Content -LiteralPath $LogPath -Raw
+    if ($contents -notmatch "Result:\s+Succeeded") {
+        throw "Build log does not contain a successful result: $LogPath"
+    }
+    $diagnostics = [regex]::Matches($contents, "(?im)\b(?:warning C\d+|error C\d+|fatal error C\d+|error LNK\d+)\b")
+    $toolDiagnostics = [regex]::Matches($contents, "(?im)^\s*(?:warning|error):")
+    if ($diagnostics.Count -gt 0 -or $toolDiagnostics.Count -gt 0) {
+        throw "Build produced compiler/linker/UHT diagnostic(s): $LogPath"
+    }
+}
+
+function Assert-LyraRuntime {
+    param(
+        [Parameter(Mandatory = $true)][string]$ResultPath,
+        [Parameter(Mandatory = $true)][string]$UnrealLogPath,
+        [Parameter(Mandatory = $true)][string]$ExpectedMode,
+        [Parameter(Mandatory = $true)][string[]]$ExpectedNetModes
+    )
+    if (!(Test-Path -LiteralPath $ResultPath -PathType Leaf)) {
+        throw "Lyra runtime did not create $ResultPath"
+    }
+    $report = Get-Content -LiteralPath $ResultPath -Raw | ConvertFrom-Json
+    if ($report.status -ne "passed" -or $report.mode -ne $ExpectedMode) {
+        throw "Lyra $ExpectedMode runtime failed: $($report.error)"
+    }
+    if ($report.python_version -notlike "3.11.*") {
+        throw "Lyra $ExpectedMode runtime used unexpected Python $($report.python_version)"
+    }
+    if ($ExpectedNetModes -notcontains $report.snapshot.net_mode) {
+        throw "Lyra $ExpectedMode runtime used unexpected net mode '$($report.snapshot.net_mode)'"
+    }
+
+    $contents = Get-Content -LiteralPath $UnrealLogPath -Raw
+    foreach ($marker in @(
+        "UEP_LYRA_SCRIPT_LOADED",
+        "UEP_LYRA_BRIDGE_ATTACHED",
+        "UEP_LYRA_SMOKE_PASSED",
+        "FPlatformMisc::RequestExit",
+        "Object subsystem successfully closed",
+        "Goodbye Python",
+        "Log file closed"
+    )) {
+        if (!$contents.Contains($marker)) {
+            throw "Lyra $ExpectedMode runtime log is missing '$marker': $UnrealLogPath"
+        }
+    }
+    $fatalMatches = @([regex]::Matches($contents, "(?im)Fatal error:|Assertion failed:|Unhandled Exception:|LogWindows:\s+Error:"))
+    $errorMatches = @([regex]::Matches($contents, "(?im)^.*Log[A-Za-z0-9_]+:\s+Error:.*$"))
+    if ($fatalMatches.Count -gt 0 -or $errorMatches.Count -gt 0) {
+        throw "Lyra $ExpectedMode runtime log contains fatal/assert/error diagnostics: $UnrealLogPath"
+    }
+    return [pscustomobject]@{
+        Report = $report
+        FatalDiagnostics = $fatalMatches.Count
+        ErrorDiagnostics = $errorMatches.Count
     }
 }
 
@@ -124,8 +194,10 @@ if (!$OutputRoot) {
 }
 $outputRootPath = Get-FullPath $OutputRoot
 if ((Test-PathIsUnder -Path $outputRootPath -Parent $engineRootPath) -or
-    (Test-PathIsUnder -Path $outputRootPath -Parent $lyraRoot)) {
-    throw "OutputRoot must be outside the Unreal Engine and Lyra reference trees: $outputRootPath"
+    (Test-PathIsUnder -Path $engineRootPath -Parent $outputRootPath) -or
+    (Test-PathIsUnder -Path $outputRootPath -Parent $lyraRoot) -or
+    (Test-PathIsUnder -Path $lyraRoot -Parent $outputRootPath)) {
+    throw "OutputRoot must not overlap the Unreal Engine or Lyra reference trees: $outputRootPath"
 }
 $stageRoot = Join-Path $outputRootPath "Stage\Lyra"
 $markerPath = Join-Path $stageRoot ".uep-lyra-source-stage.json"
@@ -143,6 +215,7 @@ $summary = [ordered]@{
     source_content_gate = "not_claimed"
     build = $null
     runtime = $null
+    server_exit = $null
     error = $null
 }
 
@@ -269,6 +342,7 @@ DefaultUIPolicyClass=
         "-UTF8Output"
     )
     $summary.build = Invoke-LoggedProcess -FilePath $dotnetPath -ArgumentList $buildArguments -WorkingDirectory $engineRootPath -LogPath $buildLog -Label "LyraEditor source build" -TimeoutSeconds 3600
+    Assert-BuildLog $buildLog
 
     $smokeResult = Join-Path $runRoot "runtime.json"
     $runtimeStdout = Join-Path $runRoot "runtime-stdout.log"
@@ -292,30 +366,8 @@ DefaultUIPolicyClass=
         "-UEPLyraMode=source"
     )
     $runtimeProcess = Invoke-LoggedProcess -FilePath $editorPath -ArgumentList $runtimeArguments -WorkingDirectory $stageRoot -LogPath $runtimeStdout -Label "Lyra source runtime smoke" -TimeoutSeconds 300
-    if (!(Test-Path -LiteralPath $smokeResult -PathType Leaf)) {
-        throw "Lyra runtime smoke did not create $smokeResult"
-    }
-    $runtimeReport = Get-Content -LiteralPath $smokeResult -Raw | ConvertFrom-Json
-    if ($runtimeReport.status -ne "passed") {
-        throw "Lyra runtime smoke failed: $($runtimeReport.error)"
-    }
-    if ($runtimeReport.python_version -notlike "3.11.*") {
-        throw "Lyra runtime used unexpected Python $($runtimeReport.python_version)"
-    }
-    $runtimeContents = Get-Content -LiteralPath $runtimeLog -Raw
-    foreach ($marker in @("UEP_LYRA_SCRIPT_LOADED", "UEP_LYRA_BRIDGE_ATTACHED", "UEP_LYRA_SMOKE_PASSED", "Object subsystem successfully closed", "Goodbye Python", "Log file closed")) {
-        if (!$runtimeContents.Contains($marker)) {
-            throw "Lyra runtime log is missing '$marker': $runtimeLog"
-        }
-    }
-    $fatalMatches = @([regex]::Matches($runtimeContents, "(?im)Fatal error:|Assertion failed:|Unhandled Exception:|LogWindows:\s+Error:"))
-    if ($fatalMatches.Count -gt 0) {
-        throw "Lyra runtime log contains $($fatalMatches.Count) fatal/assert diagnostics: $runtimeLog"
-    }
-    $errorMatches = @([regex]::Matches($runtimeContents, "(?im)^.*Log[A-Za-z0-9_]+:\s+Error:.*$"))
-    if ($errorMatches.Count -gt 0) {
-        throw "Lyra runtime log contains $($errorMatches.Count) unexpected Log*: Error diagnostics: $runtimeLog"
-    }
+    $runtimeEvidence = Assert-LyraRuntime -ResultPath $smokeResult -UnrealLogPath $runtimeLog -ExpectedMode "source" -ExpectedNetModes @("Standalone")
+    $runtimeReport = $runtimeEvidence.Report
     $summary.runtime = [ordered]@{
         process = $runtimeProcess
         report = $smokeResult
@@ -323,8 +375,59 @@ DefaultUIPolicyClass=
         world_ticks = $runtimeReport.world_ticks
         python = $runtimeReport.python_version
         net_mode = $runtimeReport.snapshot.net_mode
-        fatal_diagnostics = $fatalMatches.Count
-        error_diagnostics = $errorMatches.Count
+        fatal_diagnostics = $runtimeEvidence.FatalDiagnostics
+        error_diagnostics = $runtimeEvidence.ErrorDiagnostics
+    }
+
+    $networkProperties = [System.Net.NetworkInformation.IPGlobalProperties]::GetIPGlobalProperties()
+    $activePorts = @($networkProperties.GetActiveTcpListeners().Port) + @($networkProperties.GetActiveUdpListeners().Port)
+    if ($activePorts -contains $ServerPort) {
+        throw "ServerPort $ServerPort is already in use"
+    }
+    $serverResult = Join-Path $runRoot "server-exit.json"
+    $serverStdout = Join-Path $runRoot "server-exit-stdout.log"
+    $serverLog = Join-Path $runRoot "server-exit.log"
+    $serverArguments = @(
+        $stageProject,
+        "/Engine/Maps/Entry",
+        "-server",
+        "-port=$ServerPort",
+        "-DisablePython",
+        "-NullRHI",
+        "-NoSound",
+        "-NoSplash",
+        "-NoP4",
+        "-Unattended",
+        "-NoAssetRegistryCache",
+        "-NoLoadingScreen",
+        "-stdout",
+        "-FullStdOutLogOutput",
+        "-abslog=$serverLog",
+        "-UEPLyraSmokeResult=$serverResult",
+        "-UEPLyraMode=server_exit",
+        "-UEPLyraTimeoutSeconds=60"
+    )
+    $serverProcess = Invoke-LoggedProcess -FilePath $editorPath -ArgumentList $serverArguments -WorkingDirectory $stageRoot -LogPath $serverStdout -Label "Lyra dedicated-server exit smoke" -TimeoutSeconds 300
+    $serverEvidence = Assert-LyraRuntime -ResultPath $serverResult -UnrealLogPath $serverLog -ExpectedMode "server_exit" -ExpectedNetModes @("DedicatedServer")
+    $serverReport = $serverEvidence.Report
+    $serverContents = Get-Content -LiteralPath $serverLog -Raw
+    if (!$serverContents.Contains("listening on port $ServerPort")) {
+        throw "Lyra dedicated server did not listen on port $ServerPort"
+    }
+    if (!$serverReport.snapshot.server_authority) {
+        throw "Lyra dedicated-server exit smoke did not retain authority"
+    }
+    $summary.server_exit = [ordered]@{
+        process = $serverProcess
+        report = $serverResult
+        unreal_log = $serverLog
+        port = $ServerPort
+        world_ticks = $serverReport.world_ticks
+        python = $serverReport.python_version
+        net_mode = $serverReport.snapshot.net_mode
+        server_authority = $serverReport.snapshot.server_authority
+        fatal_diagnostics = $serverEvidence.FatalDiagnostics
+        error_diagnostics = $serverEvidence.ErrorDiagnostics
     }
     $summary.status = "passed"
 }

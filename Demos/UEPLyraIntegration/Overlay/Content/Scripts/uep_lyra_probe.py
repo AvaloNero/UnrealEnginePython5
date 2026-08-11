@@ -18,6 +18,7 @@ EXPECTED_CONTROLLERS_PREFIX = "-UEPLyraExpectedPlayerControllers="
 REQUIRED_FEATURES_PREFIX = "-UEPLyraRequiredFeatures="
 EXPECTED_EXPERIENCE_PREFIX = "-UEPLyraExpectedExperienceContains="
 HOLD_READY_PREFIX = "-UEPLyraHoldReadySeconds="
+READY_RELEASE_PREFIX = "-UEPLyraReadyReleaseFile="
 
 
 def _command_line_value(prefix, default=None):
@@ -78,7 +79,9 @@ class LyraRuntimeProbe:
         self.required_features = _command_line_list(REQUIRED_FEATURES_PREFIX)
         self.expected_experience = _command_line_value(EXPECTED_EXPERIENCE_PREFIX, "")
         self.hold_ready_seconds = max(0.0, _command_line_float(HOLD_READY_PREFIX, 0.0))
+        self.ready_release_path = _command_line_value(READY_RELEASE_PREFIX)
         self.ready_since = None
+        self.ready_announced = False
         self.bridge_class = ue.find_class("UEPLyraWorldSubsystem")
         self.library = ue.find_class("UEPLyraBridgeLibrary").get_cdo()
         self.world = None
@@ -186,6 +189,13 @@ class LyraRuntimeProbe:
                 pending.append("Standalone net mode")
             return pending
 
+        if self.mode == "server_exit":
+            if report["net_mode"] not in ("DedicatedServer", "ListenServer"):
+                pending.append("server net mode")
+            if not report["server_authority"]:
+                pending.append("server authority")
+            return pending
+
         if self.mode in ("standalone", "packaged", "client"):
             expected_net_mode = "Client" if self.mode == "client" else "Standalone"
             if report["net_mode"] != expected_net_mode:
@@ -248,6 +258,7 @@ class LyraRuntimeProbe:
             "expected_experience_contains": self.expected_experience,
             "expected_player_controllers": self.expected_player_controllers,
             "hold_ready_seconds": self.hold_ready_seconds,
+            "ready_release_gate": bool(self.ready_release_path),
             "snapshot": self._snapshot_report(snapshot) if snapshot is not None else None,
             "error": error,
         }
@@ -259,6 +270,12 @@ class LyraRuntimeProbe:
         )
 
     def _request_quit(self):
+        try:
+            ue.request_exit()
+            return
+        except Exception:
+            ue.log_error(traceback.format_exc())
+
         candidates = [self.world] if _is_valid(self.world) else []
         candidates.extend(ue.all_worlds())
         for world in candidates:
@@ -290,6 +307,7 @@ class LyraRuntimeProbe:
             pending = self._pending_requirements(snapshot_report)
             if pending:
                 self.ready_since = None
+                self.ready_announced = False
                 if self.elapsed > self.timeout_seconds:
                     self._assert_ready(snapshot_report)
                 return True
@@ -298,6 +316,13 @@ class LyraRuntimeProbe:
                 self.ready_since = self.elapsed
             if self.elapsed - self.ready_since < self.hold_ready_seconds:
                 return True
+
+            if self.ready_release_path:
+                if not self.ready_announced:
+                    ue.log("UEP_LYRA_REQUIREMENTS_READY {0}".format(self.mode))
+                    self.ready_announced = True
+                if not Path(self.ready_release_path).is_file():
+                    return True
 
             self._assert_ready(snapshot_report)
             self._write_result("passed", snapshot)

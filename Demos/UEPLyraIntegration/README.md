@@ -30,7 +30,8 @@ Once a complete project exists outside the engine tree, run every 0.4.0 gate:
     -Mode All
 ```
 
-The server probe waits for a real remote controller, authoritative pawn,
-PlayerState and ASC, then holds readiness long enough for the client to prove
-Client net mode, an autonomous local pawn, replicated PlayerState, Enhanced
-Input and ASC readiness.
+The server and client each publish a readiness marker, then wait behind one
+driver-owned release signal. The server proves a real remote controller,
+authoritative pawn, PlayerState and ASC while the client proves Client net mode,
+an autonomous local pawn, replicated PlayerState, Enhanced Input and ASC. Only
+after both markers exist can either process shut down.

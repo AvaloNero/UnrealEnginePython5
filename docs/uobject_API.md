@@ -232,7 +232,19 @@ uobject.bind_input_axis('axis')
 uobject.quit_game()
 ```
 
-well, quit the game :)
+quit a game world through its first local player controller. Dedicated servers
+have no local controller; use the module-level `unreal_engine.request_exit()`
+for game, commandlet and server process shutdown.
+
+---
+```py
+import unreal_engine as ue
+
+ue.request_exit()
+```
+
+request a graceful engine-loop exit without requiring a world or player
+controller. Pass `True` only when a forced platform exit is required.
 
 ---
 ```py

@@ -60,15 +60,19 @@ source-only configuration overrides inside the stage. Clean result
 - zero compiler, fatal/assert and `Log*: Error` diagnostics; and
 - zero Unreal Engine source-code modifications during the run.
 
-Final incremental result `20260811-174727` rebuilt the reflected network
-snapshot and late-`GameState` lifecycle through UBT, then repeated the 12-tick
-runtime gate with exit code 0 and zero fatal or `Log*: Error` diagnostics.
+Final source result `20260811-183357` rebuilt UEP, the reflected network
+snapshot and late-`GameState` lifecycle through UBT. It passed the 12-tick
+Standalone gate, then ran a second 30-tick `DedicatedServer` on UDP 7789 and
+proved `unreal_engine.request_exit()` produces exit code 0, object-subsystem and
+Python closure, and zero fatal or `Log*: Error` diagnostics. Generic regression
+`20260811-184425` passed 70/70 required checks across both interpreter modes,
+the Editor, UAT cook/package and packaged CPython 3.11.8 runtime.
 
 The source-only stage intentionally uses `/Engine/Maps/Entry`, the base Asset
 Manager and no Lyra content-backed Game Feature plugins. This is a compatibility
 test, not gameplay evidence.
 
-`Validation/Test-UEP58LyraReadiness.ps1` result `20260811-180834` reports:
+`Validation/Test-UEP58LyraReadiness.ps1` result `20260811-184203` reports:
 
 - UE 5.8.0 and CPython 3.11.8 ready;
 - Lyra project/targets/config and five explicit Registered Game Feature plugin
@@ -80,9 +84,10 @@ test, not gameplay evidence.
 `Validation/Run-UEP58LyraValidation.ps1` encodes the remaining acceptance as a
 single `All` lane: strict readiness, isolated full-project staging, clean Editor
 build, real Standalone Experience/Game Feature/pawn/input/GAS readiness,
-dedicated-server/client authority and replicated player lifecycle, Win64 cook
-and package, and packaged CPython gameplay. Negative result
-`20260811-180836` rejected the local source sample before staging with all 11
+dedicated-server/client authority and replicated player lifecycle with an
+explicit two-role ready/release handshake, Win64 cook and package, and packaged
+CPython gameplay. Negative result
+`20260811-184148` rejected the local source sample before staging with all 11
 content blockers preserved in JSON. This proves the guard, not the remaining
 runtime gates.
 

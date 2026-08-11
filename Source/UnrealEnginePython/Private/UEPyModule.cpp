@@ -117,6 +117,7 @@
 #endif
 
 #include "Runtime/Core/Public/UObject/PropertyPortFlags.h"
+#include "HAL/PlatformMisc.h"
 
 #if UEP_LEGACY_ENGINE_MINOR_VERSION < 18
 #define FSoftObjectProperty UAssetObjectProperty
@@ -159,6 +160,24 @@ static PyObject* py_unreal_engine_py_gc(PyObject* self, PyObject* args)
 static PyObject* py_unreal_engine_is_in_game_thread(PyObject* self, PyObject* args)
 {
 	return PyBool_FromLong(IsInGameThread() ? 1 : 0);
+}
+
+static PyObject* py_unreal_engine_request_exit(PyObject* self, PyObject* args)
+{
+	PyObject* py_force = Py_False;
+	if (!PyArg_ParseTuple(args, "|O:request_exit", &py_force))
+	{
+		return nullptr;
+	}
+
+	const int force = PyObject_IsTrue(py_force);
+	if (force < 0)
+	{
+		return nullptr;
+	}
+
+	FPlatformMisc::RequestExit(force != 0);
+	Py_RETURN_NONE;
 }
 
 static PyObject* py_unreal_engine_exec(PyObject* self, PyObject* args)
@@ -460,6 +479,7 @@ static PyMethodDef unreal_engine_methods[] = {
 
 	{ "py_gc", py_unreal_engine_py_gc, METH_VARARGS, "" },
 	{ "is_in_game_thread", py_unreal_engine_is_in_game_thread, METH_NOARGS, "Return True on Unreal's game thread." },
+	{ "request_exit", py_unreal_engine_request_exit, METH_VARARGS, "Request a graceful engine exit; pass True only when a forced exit is required." },
 	// exec is a reserved keyword in python2
 #if PY_MAJOR_VERSION >= 3
 	{ "exec", py_unreal_engine_exec, METH_VARARGS, "" },

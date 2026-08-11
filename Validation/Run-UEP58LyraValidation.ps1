@@ -355,7 +355,8 @@ function Get-LyraRuntimeArguments {
         [Parameter(Mandatory = $true)][string[]]$Features,
         [Parameter(Mandatory = $true)][int]$TimeoutSeconds,
         [string]$Experience = "",
-        [int]$HoldReadySeconds = 0
+        [int]$HoldReadySeconds = 0,
+        [string]$ReadyReleaseFile = ""
     )
     $arguments = [System.Collections.Generic.List[string]]::new()
     foreach ($argument in @(
@@ -383,6 +384,9 @@ function Get-LyraRuntimeArguments {
     }
     if ($Experience) {
         $arguments.Add("-UEPLyraExpectedExperienceContains=$Experience")
+    }
+    if ($ReadyReleaseFile) {
+        $arguments.Add("-UEPLyraReadyReleaseFile=$ReadyReleaseFile")
     }
     return $arguments.ToArray()
 }
@@ -606,7 +610,8 @@ try {
         }
 
         if ($Mode -in @("Network", "All")) {
-            $activePorts = [System.Net.NetworkInformation.IPGlobalProperties]::GetIPGlobalProperties().GetActiveTcpListeners().Port
+            $networkProperties = [System.Net.NetworkInformation.IPGlobalProperties]::GetIPGlobalProperties()
+            $activePorts = @($networkProperties.GetActiveTcpListeners().Port) + @($networkProperties.GetActiveUdpListeners().Port)
             if ($activePorts -contains $ServerPort) {
                 throw "ServerPort $ServerPort is already in use"
             }
@@ -616,16 +621,21 @@ try {
             $clientResult = Join-Path $resultRoot "client.json"
             $clientStdout = Join-Path $resultRoot "client-stdout.log"
             $clientLog = Join-Path $resultRoot "client.log"
-            $serverArguments = @($stageProject, "$GameplayMap?Port=$ServerPort", "-server", "-Multiprocess") +
-                (Get-LyraRuntimeArguments -TargetMode "server" -ResultPath $serverResult -UnrealLogPath $serverLog -ExpectedControllers 1 -Features $RequiredGameFeatures -TimeoutSeconds $RuntimeTimeoutSeconds -Experience $ExpectedExperience -HoldReadySeconds 10)
+            $networkReleaseFile = Join-Path $resultRoot "network-ready.release"
+            $serverArguments = @($stageProject, $GameplayMap, "-server", "-port=$ServerPort", "-Multiprocess") +
+                (Get-LyraRuntimeArguments -TargetMode "server" -ResultPath $serverResult -UnrealLogPath $serverLog -ExpectedControllers 1 -Features $RequiredGameFeatures -TimeoutSeconds $RuntimeTimeoutSeconds -Experience $ExpectedExperience -ReadyReleaseFile $networkReleaseFile)
             $clientArguments = @($stageProject, "127.0.0.1:$ServerPort", "-game", "-Multiprocess") +
-                (Get-LyraRuntimeArguments -TargetMode "client" -ResultPath $clientResult -UnrealLogPath $clientLog -ExpectedControllers 1 -Features $RequiredGameFeatures -TimeoutSeconds $RuntimeTimeoutSeconds -Experience $ExpectedExperience)
+                (Get-LyraRuntimeArguments -TargetMode "client" -ResultPath $clientResult -UnrealLogPath $clientLog -ExpectedControllers 1 -Features $RequiredGameFeatures -TimeoutSeconds $RuntimeTimeoutSeconds -Experience $ExpectedExperience -ReadyReleaseFile $networkReleaseFile)
             $serverHandle = $null
             $clientHandle = $null
             try {
                 $serverHandle = Start-LoggedProcess -FilePath $editorPath -ArgumentList $serverArguments -WorkingDirectory $stageRoot -LogPath $serverStdout -Label "Lyra dedicated server"
+                Wait-ForLogMarker -Handle $serverHandle -UnrealLogPath $serverLog -Marker "listening on port $ServerPort" -TimeoutSeconds 120
                 Wait-ForLogMarker -Handle $serverHandle -UnrealLogPath $serverLog -Marker "UEP_LYRA_BRIDGE_ATTACHED" -TimeoutSeconds 120
                 $clientHandle = Start-LoggedProcess -FilePath $editorPath -ArgumentList $clientArguments -WorkingDirectory $stageRoot -LogPath $clientStdout -Label "Lyra multiplayer client"
+                Wait-ForLogMarker -Handle $serverHandle -UnrealLogPath $serverLog -Marker "UEP_LYRA_REQUIREMENTS_READY server" -TimeoutSeconds $RuntimeTimeoutSeconds
+                Wait-ForLogMarker -Handle $clientHandle -UnrealLogPath $clientLog -Marker "UEP_LYRA_REQUIREMENTS_READY client" -TimeoutSeconds $RuntimeTimeoutSeconds
+                "release" | Set-Content -LiteralPath $networkReleaseFile -Encoding ascii
                 $clientProcess = Complete-LoggedProcess -Handle $clientHandle -TimeoutSeconds ($RuntimeTimeoutSeconds + 120)
                 $serverProcess = Complete-LoggedProcess -Handle $serverHandle -TimeoutSeconds 120
             }
@@ -637,6 +647,7 @@ try {
             $serverReport = Assert-LyraRuntime -ResultPath $serverResult -UnrealLogPath $serverLog -ExpectedMode "server" -ExpectedFeatures $RequiredGameFeatures -ExpectedExperienceContains $ExpectedExperience
             $summary.network = [ordered]@{
                 port = $ServerPort
+                release_signal = $networkReleaseFile
                 server = [ordered]@{ process = $serverProcess; report = $serverResult; unreal_log = $serverLog; snapshot = $serverReport.snapshot }
                 client = [ordered]@{ process = $clientProcess; report = $clientResult; unreal_log = $clientLog; snapshot = $clientReport.snapshot }
             }

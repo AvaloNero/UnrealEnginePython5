@@ -88,6 +88,10 @@ def validate_versions_and_mode():
         check(not epic_unreal_loaded, f"Epic's unreal module unexpectedly loaded in {mode} mode")
 
 
+def validate_runtime_control_surface():
+    check(callable(getattr(ue, "request_exit", None)), "unreal_engine.request_exit is unavailable")
+
+
 def create_fixture():
     fixture_class = ue.find_class("UEPValidationObject")
     check(fixture_class is not None, "UEPValidationObject class was not found")
@@ -465,6 +469,7 @@ def validate_housekeeper_gc():
 
 
 run_case("version_and_interpreter_mode", validate_versions_and_mode)
+run_case("runtime_control_surface", validate_runtime_control_surface)
 run_case("class_lookup_and_construction", create_fixture)
 run_case("property_inventory", validate_property_inventory)
 run_case("scalar_properties", validate_scalar_properties)

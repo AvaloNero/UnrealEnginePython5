@@ -168,15 +168,19 @@ The source-only compatibility lane is independently runnable:
 It copies Lyra source/config/plugin code to the script-marked
 `.build/LyraValidation/Stage/Lyra`, injects the current UEP source and
 `UEPLyraBridge`, and disables content-backed Lyra startup only in that disposable
-stage. It then builds `LyraEditor` and runs `/Engine/Maps/Entry` with UEP-owned
-CPython 3.11. Passing proves compiler/UHT compatibility, module loading,
-game-thread bridge access and clean shutdown; it explicitly records
+stage. It then builds `LyraEditor`, runs `/Engine/Maps/Entry` in Standalone, and
+runs a second content-free dedicated server that must listen on its requested
+UDP port and exit through `unreal_engine.request_exit()`. Passing proves
+compiler/UHT compatibility, module loading, game-thread bridge access and clean
+headless shutdown; it explicitly records
 `source_content_gate: not_claimed` and is not a substitute for real Lyra
 gameplay, networking or packaging.
 
-Current evidence is clean source result `20260811-165230`, final incremental
-source regression `20260811-174727` (both passed), and readiness result
-`20260811-180834` (`source_ready: true`, `content_ready: false`). Full 0.4.0
+Current evidence is clean source result `20260811-165230`, final source
+regression `20260811-183357` (Standalone plus dedicated-server graceful exit),
+full generic regression `20260811-184425` (70/70 including packaged runtime),
+and readiness result
+`20260811-184203` (`source_ready: true`, `content_ready: false`). Full 0.4.0
 acceptance remains blocked until a complete external Lyra project is available;
 do not copy Marketplace assets into the engine source checkout.
 
@@ -202,11 +206,13 @@ runs these gates without changing the reference project:
 2. real `L_Expanse` Standalone Experience with active `ShooterCore` and
    `ShooterMaps`, local pawn, PlayerState, Enhanced Input and ASC;
 3. a dedicated server/client pair proving remote connection, server authority,
-   client `AutonomousProxy`, replicated PlayerState and ASC on both roles; and
+   client `AutonomousProxy`, replicated PlayerState and ASC on both roles. Both
+   processes wait behind a shared release signal until both readiness markers
+   have been observed; and
 4. Win64 BuildCookRun followed by the same gameplay contract in `LyraGame.exe`
    with UEP-owned CPython 3.11.
 
 `Readiness`, `Standalone`, `Network` and `Package` modes run narrower diagnostic
 lanes; only `All` can set `full_acceptance: true`. Negative result
-`20260811-180836` correctly reports `blocked` with 11 missing-content reasons
+`20260811-184148` correctly reports `blocked` with 11 missing-content reasons
 and no staging project for the local Git sample.
