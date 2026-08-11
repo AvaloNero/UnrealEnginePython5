@@ -16,6 +16,13 @@ UE4 project history remains available in Git.
 - Lyra source/readiness drivers that stage outside the reference project,
   require UE5.8 and engine-bundled CPython 3.11, and distinguish source
   compatibility from content-dependent acceptance.
+- A strict full-content Lyra driver covering isolated staging, Editor build,
+  real Experience/Game Feature readiness, Standalone pawn/input/GAS state,
+  dedicated-server/client authority and replication, Win64 cook/package and
+  packaged CPython runtime.
+- Network-observation fields for local/remote controllers, PlayerState, pawn
+  control/roles and a readiness hold window so a server cannot terminate before
+  its validating client finishes.
 
 ### Changed
 
@@ -29,12 +36,15 @@ UE4 project history remains available in Git.
   modules, loaded `UEPLyraBridge`, ran 12 Standalone game-world ticks on
   CPython 3.11.8 and exited 0 with zero compiler, fatal and `Log*: Error`
   diagnostics. Unreal Engine source remained unchanged.
-- Incremental regression result `20260811-172252` rebuilt the final
-  late-`GameState` lifecycle bridge through UBT and repeated the runtime gate
+- Incremental regression result `20260811-174727` rebuilt the final reflected
+  network snapshot through UBT and repeated the source runtime gate
   successfully.
-- Readiness result `20260811-163832` reports source ready but content blocked:
+- Readiness result `20260811-180834` reports source ready but content blocked:
   the local Lyra Git sample contains zero assets/maps and lacks all five
   required GameFeatureData assets.
+- Full-driver negative result `20260811-180836` stopped before staging with 11
+  machine-readable content blockers, proving that source-only evidence cannot
+  accidentally satisfy the full acceptance lane.
 
 ### Not yet accepted
 

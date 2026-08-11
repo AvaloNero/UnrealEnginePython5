@@ -96,10 +96,14 @@ Source gate result `20260811-165230` built a clean disposable `LyraEditor`
 stage, linked `UEPLyraBridge`, started a game world with UEP-owned CPython
 3.11.8, captured a game-thread/Standalone snapshot and shut down with zero
 compiler, fatal or `Log*: Error` diagnostics. The readiness result
-`20260811-172340` reports `source_ready: true` and `content_ready: false`: the
+`20260811-180834` reports `source_ready: true` and `content_ready: false`: the
 local Git sample contains zero `.uasset` and zero `.umap` files, including no
 project GameData/maps or GameFeatureData for its five feature plugins.
-Final lifecycle/UBT regression result `20260811-172252` also passed.
+Final reflected network-snapshot/UBT regression result `20260811-174727` also
+passed. `Run-UEP58LyraValidation.ps1` now encodes the complete Standalone,
+dedicated-server/client and packaged-runtime contract. Negative result
+`20260811-180836` rejected the content-free sample before staging; the full lane
+has not passed because the external content project is still unavailable.
 
 0.4.0 is not complete and the main plugin version must not be bumped until a
 complete external Lyra project passes Experience activation, gameplay input and

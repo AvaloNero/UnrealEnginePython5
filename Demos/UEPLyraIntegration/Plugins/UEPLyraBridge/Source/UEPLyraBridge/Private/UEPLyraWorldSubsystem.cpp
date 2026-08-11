@@ -32,6 +32,23 @@ FString NetModeToString(const ENetMode NetMode)
         return TEXT("Unknown");
     }
 }
+
+FString NetRoleToString(const ENetRole Role)
+{
+    switch (Role)
+    {
+    case ROLE_None:
+        return TEXT("None");
+    case ROLE_SimulatedProxy:
+        return TEXT("SimulatedProxy");
+    case ROLE_AutonomousProxy:
+        return TEXT("AutonomousProxy");
+    case ROLE_Authority:
+        return TEXT("Authority");
+    default:
+        return TEXT("Unknown");
+    }
+}
 }
 
 bool UUEPLyraWorldSubsystem::DoesSupportWorldType(const EWorldType::Type WorldType) const
@@ -115,6 +132,34 @@ FUEPLyraRuntimeSnapshot UUEPLyraWorldSubsystem::CaptureSnapshot() const
     Snapshot.NetMode = NetModeToString(World->GetNetMode());
     Snapshot.bHasServerAuthority = World->GetNetMode() != NM_Client;
 
+    APlayerController* PlayerController = nullptr;
+    for (FConstPlayerControllerIterator Iterator = World->GetPlayerControllerIterator(); Iterator; ++Iterator)
+    {
+        APlayerController* Candidate = Iterator->Get();
+        if (!Candidate)
+        {
+            continue;
+        }
+        ++Snapshot.PlayerControllerCount;
+        if (Candidate->IsLocalController())
+        {
+            ++Snapshot.LocalPlayerControllerCount;
+            PlayerController = Candidate;
+        }
+        else
+        {
+            ++Snapshot.RemotePlayerControllerCount;
+            if (!PlayerController)
+            {
+                PlayerController = Candidate;
+            }
+        }
+    }
+    if (const AGameStateBase* GameState = World->GetGameState())
+    {
+        Snapshot.PlayerStateCount = GameState->PlayerArray.Num();
+    }
+
     ULyraExperienceManagerComponent* Manager = ExperienceManager.Get();
     Snapshot.bHasExperienceManager = Manager != nullptr;
     Snapshot.bExperienceLoaded = Manager && Manager->IsExperienceLoaded();
@@ -127,11 +172,14 @@ FUEPLyraRuntimeSnapshot UUEPLyraWorldSubsystem::CaptureSnapshot() const
         Snapshot.CurrentExperience = CurrentExperience.Get();
     }
 
-    APlayerController* PlayerController = World->GetFirstPlayerController();
     APawn* Pawn = PlayerController ? PlayerController->GetPawn() : nullptr;
     Snapshot.bHasPlayerPawn = Pawn != nullptr;
     if (Pawn)
     {
+        Snapshot.bPawnLocallyControlled = Pawn->IsLocallyControlled();
+        Snapshot.bPlayerStateReady = Pawn->GetPlayerState() != nullptr;
+        Snapshot.PawnLocalRole = NetRoleToString(Pawn->GetLocalRole());
+        Snapshot.PawnRemoteRole = NetRoleToString(Pawn->GetRemoteRole());
         const ULyraHeroComponent* Hero = ULyraHeroComponent::FindHeroComponent(Pawn);
         const ULyraPawnExtensionComponent* PawnExtension = ULyraPawnExtensionComponent::FindPawnExtensionComponent(Pawn);
         Snapshot.bHeroInputReady = Hero && Hero->IsReadyToBindInputs();

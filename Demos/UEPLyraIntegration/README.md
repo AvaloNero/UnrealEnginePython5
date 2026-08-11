@@ -7,7 +7,8 @@ game-thread-only APIs:
 
 - Experience readiness becomes a dynamic multicast event;
 - Game Feature state, Enhanced Input readiness, Ability System readiness,
-  authority and net mode are exposed as a read-only snapshot;
+  authority, net mode, local/remote controllers, PlayerState and pawn roles are
+  exposed as a read-only snapshot;
 - the subsystem and its listeners follow `UWorld` lifetime, and the Python
   probe explicitly unbinds its callback before shutdown or reload; late client
   `GameState` assignment is observed before binding the Experience manager;
@@ -19,3 +20,17 @@ the disposable stage so it can prove UE5.8 compilation, module loading,
 CPython 3.11 ownership and bridge lifecycle without pretending that gameplay
 works. Full Experience, multiplayer, cook and packaged gates remain blocked
 until the Launcher/Marketplace `Content` trees are present.
+
+Once a complete project exists outside the engine tree, run every 0.4.0 gate:
+
+```powershell
+.\Validation\Run-UEP58LyraValidation.ps1 `
+    -EngineRoot F:\UnrealEngine `
+    -LyraProject F:\UEProjects\Lyra\Lyra.uproject `
+    -Mode All
+```
+
+The server probe waits for a real remote controller, authoritative pawn,
+PlayerState and ASC, then holds readiness long enough for the client to prove
+Client net mode, an autonomous local pawn, replicated PlayerState, Enhanced
+Input and ASC readiness.

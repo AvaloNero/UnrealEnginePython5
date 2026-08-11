@@ -71,6 +71,12 @@ multiplayer, cook or packaged Lyra result is claimed. Run the readiness command
 in [`Validation/README.md`](Validation/README.md) against a complete external
 Launcher/Marketplace Lyra project before those gates.
 
+The remaining gates are encoded in
+[`Validation/Run-UEP58LyraValidation.ps1`](Validation/Run-UEP58LyraValidation.ps1).
+Its `All` mode requires an external content-complete project and runs isolated
+Standalone, dedicated-server/client, cook/package and packaged-runtime checks.
+The driver exists now, but no full-content passing result is claimed yet.
+
 ### Known 0.3.0 boundaries
 
 Release-level runtime validation remains Win64-only. The local UE5.8 install

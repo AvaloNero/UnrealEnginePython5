@@ -46,6 +46,18 @@ struct UEPLYRABRIDGE_API FUEPLyraRuntimeSnapshot
     bool bHasServerAuthority = false;
 
     UPROPERTY(BlueprintReadOnly, Category = "UEP|Lyra")
+    int32 PlayerControllerCount = 0;
+
+    UPROPERTY(BlueprintReadOnly, Category = "UEP|Lyra")
+    int32 LocalPlayerControllerCount = 0;
+
+    UPROPERTY(BlueprintReadOnly, Category = "UEP|Lyra")
+    int32 RemotePlayerControllerCount = 0;
+
+    UPROPERTY(BlueprintReadOnly, Category = "UEP|Lyra")
+    int32 PlayerStateCount = 0;
+
+    UPROPERTY(BlueprintReadOnly, Category = "UEP|Lyra")
     bool bHasExperienceManager = false;
 
     UPROPERTY(BlueprintReadOnly, Category = "UEP|Lyra")
@@ -56,6 +68,18 @@ struct UEPLYRABRIDGE_API FUEPLyraRuntimeSnapshot
 
     UPROPERTY(BlueprintReadOnly, Category = "UEP|Lyra")
     bool bHasPlayerPawn = false;
+
+    UPROPERTY(BlueprintReadOnly, Category = "UEP|Lyra")
+    bool bPawnLocallyControlled = false;
+
+    UPROPERTY(BlueprintReadOnly, Category = "UEP|Lyra")
+    bool bPlayerStateReady = false;
+
+    UPROPERTY(BlueprintReadOnly, Category = "UEP|Lyra")
+    FString PawnLocalRole;
+
+    UPROPERTY(BlueprintReadOnly, Category = "UEP|Lyra")
+    FString PawnRemoteRole;
 
     UPROPERTY(BlueprintReadOnly, Category = "UEP|Lyra")
     bool bHeroInputReady = false;

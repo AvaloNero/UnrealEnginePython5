@@ -24,6 +24,28 @@ function Test-PathIsUnder {
     return $pathValue.StartsWith($parentValue, [System.StringComparison]::OrdinalIgnoreCase)
 }
 
+function Test-UnrealPackageFile {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    if (!(Test-Path -LiteralPath $Path -PathType Leaf)) {
+        return $false
+    }
+    $item = Get-Item -LiteralPath $Path
+    if ($item.Length -lt 32) {
+        return $false
+    }
+    $stream = [System.IO.File]::Open($item.FullName, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+    try {
+        $header = [byte[]]::new(4)
+        if ($stream.Read($header, 0, $header.Length) -ne $header.Length) {
+            return $false
+        }
+        return [System.BitConverter]::ToUInt32($header, 0) -eq [uint32]2653586369
+    }
+    finally {
+        $stream.Dispose()
+    }
+}
+
 $repoRoot = Get-FullPath (Join-Path $PSScriptRoot "..")
 $engineRootPath = Get-FullPath $EngineRoot
 if (!$LyraProject) {
@@ -37,8 +59,10 @@ if (!$OutputRoot) {
 }
 $outputRootPath = Get-FullPath $OutputRoot
 if ((Test-PathIsUnder -Path $outputRootPath -Parent $engineRootPath) -or
-    (Test-PathIsUnder -Path $outputRootPath -Parent $lyraRoot)) {
-    throw "OutputRoot must be outside the Unreal Engine and Lyra reference trees: $outputRootPath"
+    (Test-PathIsUnder -Path $engineRootPath -Parent $outputRootPath) -or
+    (Test-PathIsUnder -Path $outputRootPath -Parent $lyraRoot) -or
+    (Test-PathIsUnder -Path $lyraRoot -Parent $outputRootPath)) {
+    throw "OutputRoot must not overlap the Unreal Engine or Lyra reference trees: $outputRootPath"
 }
 $runRoot = Join-Path $outputRootPath (Get-Date -Format "yyyyMMdd-HHmmss")
 New-Item -ItemType Directory -Path $runRoot -Force | Out-Null
@@ -103,8 +127,10 @@ if (Test-Path -LiteralPath $featureRoot -PathType Container) {
         $descriptorValid = $descriptor.CanContainContent -eq $true -and
             $descriptor.ExplicitlyLoaded -eq $true -and
             $descriptor.BuiltInInitialFeatureState -eq "Registered"
+        $gameFeatureDataPresent = Test-Path -LiteralPath $gameFeatureDataPath -PathType Leaf
+        $gameFeatureDataValid = Test-UnrealPackageFile $gameFeatureDataPath
         Add-Check -Name "feature_descriptor_$featureName" -Passed $descriptorValid -Gate source -Evidence $descriptorPath.FullName
-        Add-Check -Name "feature_data_$featureName" -Passed (Test-Path -LiteralPath $gameFeatureDataPath -PathType Leaf) -Gate content -Evidence $gameFeatureDataPath
+        Add-Check -Name "feature_data_$featureName" -Passed $gameFeatureDataValid -Gate content -Evidence "$gameFeatureDataPath (valid Unreal package: $gameFeatureDataValid)"
         $featureReports.Add([ordered]@{
             name = $featureName
             descriptor = $descriptorPath.FullName
@@ -113,7 +139,8 @@ if (Test-Path -LiteralPath $featureRoot -PathType Container) {
             content_assets = $assetCount
             content_maps = $mapCount
             game_feature_data = $gameFeatureDataPath
-            game_feature_data_present = Test-Path -LiteralPath $gameFeatureDataPath -PathType Leaf
+            game_feature_data_present = $gameFeatureDataPresent
+            game_feature_data_valid = $gameFeatureDataValid
         })
     }
 }
@@ -135,7 +162,8 @@ $criticalContent = @(
 )
 foreach ($relativePath in $criticalContent) {
     $path = Join-Path $lyraRoot $relativePath
-    Add-Check -Name ("critical_" + ($relativePath -replace "[^A-Za-z0-9]", "_")) -Passed (Test-Path -LiteralPath $path -PathType Leaf) -Gate content -Evidence $path
+    $validPackage = Test-UnrealPackageFile $path
+    Add-Check -Name ("critical_" + ($relativePath -replace "[^A-Za-z0-9]", "_")) -Passed $validPackage -Gate content -Evidence "$path (valid Unreal package: $validPackage)"
 }
 Add-Check -Name "project_content_assets" -Passed ($projectAssets -gt 0) -Gate content -Evidence "$projectAssets .uasset files"
 Add-Check -Name "project_content_maps" -Passed ($projectMaps -ge 2) -Gate content -Evidence "$projectMaps .umap files"

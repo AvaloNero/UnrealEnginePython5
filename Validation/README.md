@@ -153,7 +153,9 @@ Check a candidate project without changing it:
 The report separates `source_ready` from `content_ready`. Add `-Strict` only
 when missing Marketplace content should fail the calling job. A content-ready
 project must contain the base GameData, front-end/editor maps, a gameplay map
-and root GameFeatureData assets for every Lyra Game Feature plugin.
+and root GameFeatureData assets for every Lyra Game Feature plugin. Critical
+files must also carry a valid Unreal package header; zero-byte/place-holder
+files cannot satisfy the gate.
 
 The source-only compatibility lane is independently runnable:
 
@@ -173,7 +175,38 @@ game-thread bridge access and clean shutdown; it explicitly records
 gameplay, networking or packaging.
 
 Current evidence is clean source result `20260811-165230`, final incremental
-source regression `20260811-172252` (both passed), and readiness result
-`20260811-172340` (`source_ready: true`, `content_ready: false`). Full 0.4.0
+source regression `20260811-174727` (both passed), and readiness result
+`20260811-180834` (`source_ready: true`, `content_ready: false`). Full 0.4.0
 acceptance remains blocked until a complete external Lyra project is available;
 do not copy Marketplace assets into the engine source checkout.
+
+### Full-content acceptance lane
+
+Point the full driver at a complete project outside both this repository and
+the Unreal Engine source tree:
+
+```powershell
+.\Validation\Run-UEP58LyraValidation.ps1 `
+    -EngineRoot F:\UnrealEngine `
+    -LyraProject F:\UEProjects\Lyra\Lyra.uproject `
+    -Mode All
+```
+
+The driver first invokes strict readiness and refuses to create its disposable
+stage unless all required assets/maps and root GameFeatureData assets exist. It
+then copies the project to marker-protected
+`.build/LyraValidation/Full/Stage/Lyra`, injects UEP and `UEPLyraBridge`, and
+runs these gates without changing the reference project:
+
+1. warning/error-free `LyraEditor` build;
+2. real `L_Expanse` Standalone Experience with active `ShooterCore` and
+   `ShooterMaps`, local pawn, PlayerState, Enhanced Input and ASC;
+3. a dedicated server/client pair proving remote connection, server authority,
+   client `AutonomousProxy`, replicated PlayerState and ASC on both roles; and
+4. Win64 BuildCookRun followed by the same gameplay contract in `LyraGame.exe`
+   with UEP-owned CPython 3.11.
+
+`Readiness`, `Standalone`, `Network` and `Package` modes run narrower diagnostic
+lanes; only `All` can set `full_acceptance: true`. Negative result
+`20260811-180836` correctly reports `blocked` with 11 missing-content reasons
+and no staging project for the local Git sample.

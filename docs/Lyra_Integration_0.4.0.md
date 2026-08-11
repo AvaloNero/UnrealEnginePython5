@@ -22,7 +22,7 @@ nor the Lyra reference tree is edited.
 | Enhanced Input | `ULyraHeroComponent` and Lyra input configs | snapshot reports `IsReadyToBindInputs()` | Lyra owns mappings/bindings; validation does not inject authoritative gameplay input |
 | Gameplay Ability System | PlayerState ASC and `ULyraPawnExtensionComponent` | snapshot reports whether the pawn has an initialized ASC | ability grants, effects and gameplay tags remain authority-owned |
 | Asset management | `ULyraAssetManager`, primary assets and Experience bundles | readiness checks critical assets before runtime | Python does not synchronously fabricate or replace missing primary assets |
-| Multiplayer | GameMode/GameState/PlayerState replication | snapshot reports net mode and server authority; role-aware Python assertions are defined | server remains authoritative; bridge fields are derived local observations and are not replicated |
+| Multiplayer | GameMode/GameState/PlayerState replication | snapshot reports local/remote controller counts, PlayerState count/readiness, net mode, authority and pawn roles | server remains authoritative; bridge fields are derived local observations and are not replicated |
 
 Several important Lyra callbacks are native C++ delegates, not reflected
 dynamic delegates. Binding them by guessing memory layouts from Python would be
@@ -60,15 +60,15 @@ source-only configuration overrides inside the stage. Clean result
 - zero compiler, fatal/assert and `Log*: Error` diagnostics; and
 - zero Unreal Engine source-code modifications during the run.
 
-Final incremental result `20260811-172252` rebuilt the late-`GameState`
-lifecycle update through UBT, then repeated the 12-tick runtime gate with exit
-code 0 and zero fatal or `Log*: Error` diagnostics.
+Final incremental result `20260811-174727` rebuilt the reflected network
+snapshot and late-`GameState` lifecycle through UBT, then repeated the 12-tick
+runtime gate with exit code 0 and zero fatal or `Log*: Error` diagnostics.
 
 The source-only stage intentionally uses `/Engine/Maps/Entry`, the base Asset
 Manager and no Lyra content-backed Game Feature plugins. This is a compatibility
 test, not gameplay evidence.
 
-`Validation/Test-UEP58LyraReadiness.ps1` result `20260811-172340` reports:
+`Validation/Test-UEP58LyraReadiness.ps1` result `20260811-180834` reports:
 
 - UE 5.8.0 and CPython 3.11.8 ready;
 - Lyra project/targets/config and five explicit Registered Game Feature plugin
@@ -76,6 +76,15 @@ test, not gameplay evidence.
 - zero project assets/maps; and
 - missing base GameData, front-end/editor/gameplay maps and all five root
   GameFeatureData assets.
+
+`Validation/Run-UEP58LyraValidation.ps1` encodes the remaining acceptance as a
+single `All` lane: strict readiness, isolated full-project staging, clean Editor
+build, real Standalone Experience/Game Feature/pawn/input/GAS readiness,
+dedicated-server/client authority and replicated player lifecycle, Win64 cook
+and package, and packaged CPython gameplay. Negative result
+`20260811-180836` rejected the local source sample before staging with all 11
+content blockers preserved in JSON. This proves the guard, not the remaining
+runtime gates.
 
 ## Remaining 0.4.0 acceptance gates
 

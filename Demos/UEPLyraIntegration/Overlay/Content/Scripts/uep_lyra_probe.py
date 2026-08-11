@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+import re
 import sys
 import traceback
 
@@ -12,6 +13,11 @@ GAME_WORLD_TYPES = (1, 3, 5)  # Game, PIE, GamePreview
 RESULT_PREFIX = "-UEPLyraSmokeResult="
 MODE_PREFIX = "-UEPLyraMode="
 REQUIRE_EXPERIENCE = "-UEPLyraRequireExperience"
+TIMEOUT_PREFIX = "-UEPLyraTimeoutSeconds="
+EXPECTED_CONTROLLERS_PREFIX = "-UEPLyraExpectedPlayerControllers="
+REQUIRED_FEATURES_PREFIX = "-UEPLyraRequiredFeatures="
+EXPECTED_EXPERIENCE_PREFIX = "-UEPLyraExpectedExperienceContains="
+HOLD_READY_PREFIX = "-UEPLyraHoldReadySeconds="
 
 
 def _command_line_value(prefix, default=None):
@@ -23,6 +29,27 @@ def _command_line_value(prefix, default=None):
 
 def _has_argument(name):
     return any(argument.lower() == name.lower() for argument in sys.argv)
+
+
+def _command_line_float(prefix, default):
+    value = _command_line_value(prefix)
+    try:
+        return float(value) if value is not None else float(default)
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def _command_line_int(prefix, default):
+    value = _command_line_value(prefix)
+    try:
+        return int(value) if value is not None else int(default)
+    except (TypeError, ValueError):
+        return int(default)
+
+
+def _command_line_list(prefix):
+    value = _command_line_value(prefix, "")
+    return [item.strip() for item in re.split(r"[,+;]", value) if item.strip()]
 
 
 def _is_valid(obj):
@@ -46,6 +73,12 @@ class LyraRuntimeProbe:
         self.result_path = _command_line_value(RESULT_PREFIX)
         self.mode = _command_line_value(MODE_PREFIX, "source")
         self.require_experience = _has_argument(REQUIRE_EXPERIENCE)
+        self.timeout_seconds = max(10.0, _command_line_float(TIMEOUT_PREFIX, 180.0))
+        self.expected_player_controllers = max(0, _command_line_int(EXPECTED_CONTROLLERS_PREFIX, 1))
+        self.required_features = _command_line_list(REQUIRED_FEATURES_PREFIX)
+        self.expected_experience = _command_line_value(EXPECTED_EXPERIENCE_PREFIX, "")
+        self.hold_ready_seconds = max(0.0, _command_line_float(HOLD_READY_PREFIX, 0.0))
+        self.ready_since = None
         self.bridge_class = ue.find_class("UEPLyraWorldSubsystem")
         self.library = ue.find_class("UEPLyraBridgeLibrary").get_cdo()
         self.world = None
@@ -110,37 +143,94 @@ class LyraRuntimeProbe:
             "world": _field(snapshot, "WorldName", ""),
             "net_mode": _field(snapshot, "NetMode", ""),
             "server_authority": bool(_field(snapshot, "bHasServerAuthority", False)),
+            "player_controller_count": int(_field(snapshot, "PlayerControllerCount", 0)),
+            "local_player_controller_count": int(_field(snapshot, "LocalPlayerControllerCount", 0)),
+            "remote_player_controller_count": int(_field(snapshot, "RemotePlayerControllerCount", 0)),
+            "player_state_count": int(_field(snapshot, "PlayerStateCount", 0)),
             "experience_manager": bool(_field(snapshot, "bHasExperienceManager", False)),
             "experience_loaded": bool(_field(snapshot, "bExperienceLoaded", False)),
             "experience": current_experience.get_path_name() if _is_valid(current_experience) else None,
             "player_pawn": bool(_field(snapshot, "bHasPlayerPawn", False)),
+            "pawn_locally_controlled": bool(_field(snapshot, "bPawnLocallyControlled", False)),
+            "player_state_ready": bool(_field(snapshot, "bPlayerStateReady", False)),
+            "pawn_local_role": _field(snapshot, "PawnLocalRole", ""),
+            "pawn_remote_role": _field(snapshot, "PawnRemoteRole", ""),
             "hero_input_ready": bool(_field(snapshot, "bHeroInputReady", False)),
             "ability_system_ready": bool(_field(snapshot, "bAbilitySystemReady", False)),
             "game_features": self._feature_states(snapshot),
         }
 
+    def _pending_requirements(self, report):
+        pending = []
+        if not report["game_thread"]:
+            pending.append("game thread")
+        if not report["game_world"]:
+            pending.append("game world")
+        if self.require_experience and not report["experience_loaded"]:
+            pending.append("Experience load")
+        if self.expected_experience:
+            experience = report["experience"] or ""
+            if self.expected_experience.lower() not in experience.lower():
+                pending.append("Experience containing {0}".format(self.expected_experience))
+
+        feature_states = {
+            item["name"].lower(): item for item in report["game_features"] if item["name"]
+        }
+        for feature in self.required_features:
+            state = feature_states.get(feature.lower())
+            if state is None or not state["active"]:
+                pending.append("active Game Feature {0}".format(feature))
+
+        if self.mode == "source":
+            if report["net_mode"] != "Standalone":
+                pending.append("Standalone net mode")
+            return pending
+
+        if self.mode in ("standalone", "packaged", "client"):
+            expected_net_mode = "Client" if self.mode == "client" else "Standalone"
+            if report["net_mode"] != expected_net_mode:
+                pending.append("{0} net mode".format(expected_net_mode))
+            if report["local_player_controller_count"] < self.expected_player_controllers:
+                pending.append("{0} local player controller(s)".format(self.expected_player_controllers))
+            if not report["player_pawn"]:
+                pending.append("local player pawn")
+            if not report["pawn_locally_controlled"]:
+                pending.append("locally controlled pawn")
+            if not report["player_state_ready"]:
+                pending.append("replicated PlayerState")
+            if not report["hero_input_ready"]:
+                pending.append("Lyra Enhanced Input bindings")
+            if not report["ability_system_ready"]:
+                pending.append("Lyra Ability System")
+            if self.mode == "client" and report["pawn_local_role"] != "AutonomousProxy":
+                pending.append("AutonomousProxy pawn role")
+            if self.mode in ("standalone", "packaged") and report["pawn_local_role"] != "Authority":
+                pending.append("Authority pawn role")
+        elif self.mode == "server":
+            if report["net_mode"] not in ("DedicatedServer", "ListenServer"):
+                pending.append("server net mode")
+            if not report["server_authority"]:
+                pending.append("server authority")
+            if report["remote_player_controller_count"] < self.expected_player_controllers:
+                pending.append("{0} remote player controller(s)".format(self.expected_player_controllers))
+            if not report["player_pawn"]:
+                pending.append("server-side player pawn")
+            if not report["player_state_ready"]:
+                pending.append("server-side PlayerState")
+            if not report["ability_system_ready"]:
+                pending.append("server-side Ability System")
+            if report["player_pawn"] and report["pawn_local_role"] != "Authority":
+                pending.append("server Authority pawn role")
+        else:
+            pending.append("known validation mode")
+        return pending
+
     def _assert_ready(self, report):
         if sys.version_info[:2] != (3, 11):
             raise RuntimeError("expected CPython 3.11, got {0}".format(sys.version))
-        if not report["game_thread"] or not report["game_world"]:
-            raise RuntimeError("Lyra bridge snapshot was not captured on a game world/game thread")
-        if self.mode == "source":
-            if report["net_mode"] != "Standalone":
-                raise RuntimeError("source smoke expected Standalone net mode")
-            return
-        if self.require_experience and not report["experience_loaded"]:
-            raise RuntimeError("Lyra experience did not finish loading")
-        if self.mode in ("standalone", "client"):
-            if not report["player_pawn"]:
-                raise RuntimeError("Lyra player pawn was not ready")
-            if not report["hero_input_ready"]:
-                raise RuntimeError("Lyra Enhanced Input bindings were not ready")
-            if not report["ability_system_ready"]:
-                raise RuntimeError("Lyra Ability System was not ready")
-        if self.mode == "client" and report["net_mode"] != "Client":
-            raise RuntimeError("multiplayer client did not enter Client net mode")
-        if self.mode == "server" and not report["server_authority"]:
-            raise RuntimeError("server probe did not retain authority")
+        pending = self._pending_requirements(report)
+        if pending:
+            raise RuntimeError("Lyra readiness timed out waiting for: {0}".format(", ".join(pending)))
 
     def _write_result(self, status, snapshot=None, error=None):
         if not self.result_path or self.finished:
@@ -151,8 +241,13 @@ class LyraRuntimeProbe:
             "status": status,
             "mode": self.mode,
             "python_version": ".".join(str(value) for value in sys.version_info[:3]),
+            "elapsed_seconds": round(self.elapsed, 3),
             "world_ticks": self.world_ticks,
             "experience_events": self.experience_events,
+            "required_features": self.required_features,
+            "expected_experience_contains": self.expected_experience,
+            "expected_player_controllers": self.expected_player_controllers,
+            "hold_ready_seconds": self.hold_ready_seconds,
             "snapshot": self._snapshot_report(snapshot) if snapshot is not None else None,
             "error": error,
         }
@@ -182,7 +277,7 @@ class LyraRuntimeProbe:
             self.elapsed += delta_seconds
             world = self._game_world()
             if not _is_valid(world) or not self._attach(world):
-                if self.result_path and self.elapsed > 120.0:
+                if self.result_path and self.elapsed > self.timeout_seconds:
                     raise RuntimeError("Lyra game world/bridge was not ready before timeout")
                 return True
 
@@ -192,9 +287,16 @@ class LyraRuntimeProbe:
             minimum_ticks = 12 if self.mode == "source" else 30
             if self.world_ticks < minimum_ticks:
                 return True
-            if self.require_experience and not snapshot_report["experience_loaded"]:
-                if self.elapsed > 120.0:
-                    raise RuntimeError("Lyra experience was not loaded before timeout")
+            pending = self._pending_requirements(snapshot_report)
+            if pending:
+                self.ready_since = None
+                if self.elapsed > self.timeout_seconds:
+                    self._assert_ready(snapshot_report)
+                return True
+
+            if self.ready_since is None:
+                self.ready_since = self.elapsed
+            if self.elapsed - self.ready_since < self.hold_ready_seconds:
                 return True
 
             self._assert_ready(snapshot_report)
