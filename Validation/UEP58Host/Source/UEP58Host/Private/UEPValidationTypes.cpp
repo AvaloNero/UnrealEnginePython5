@@ -24,6 +24,11 @@ void UUEPValidationObject::BroadcastSignal(const int32 Value)
     OnSignal.Broadcast(Value);
 }
 
+int32 UUEPValidationObject::OverrideableValue_Implementation(const int32 Input)
+{
+	return Input;
+}
+
 AUEPValidationActor::AUEPValidationActor()
 {
     PrimaryActorTick.bCanEverTick = false;

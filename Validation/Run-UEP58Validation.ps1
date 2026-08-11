@@ -397,7 +397,7 @@ try {
             "-archive",
             "-archivedirectory=$packageRoot",
             "-map=/Engine/Maps/Entry",
-            "-AdditionalCookerOptions=-DisablePlugins=AndroidFileServer",
+            "-AdditionalCookerOptions=-DisablePlugins=AndroidFileServer -SkipZenStore",
             "-nodebuginfo"
         )
         $packageEnvironment = @{

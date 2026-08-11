@@ -1,5 +1,9 @@
 """Project startup hook imported automatically by UnrealEnginePython."""
 
+import sys
+
+sys.dont_write_bytecode = True
+
 import unreal_engine as ue
 
 

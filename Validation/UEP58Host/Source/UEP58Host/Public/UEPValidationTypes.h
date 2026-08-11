@@ -100,6 +100,10 @@ public:
 
     UFUNCTION(BlueprintCallable, Category = "UEP Validation")
     void BroadcastSignal(int32 Value);
+
+	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "UEP Validation")
+	int32 OverrideableValue(int32 Input);
+	virtual int32 OverrideableValue_Implementation(int32 Input);
 };
 
 UCLASS()

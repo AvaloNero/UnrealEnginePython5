@@ -3,6 +3,60 @@
 This file records the UE5 port maintained in this repository. The historical
 UE4 project history remains available in Git.
 
+## [0.2.0] - 2026-08-11
+
+### Added
+
+- UE5 `FField`-based dynamic Python `UClass`, reflected scalar/container/object
+  properties and `UFunction` generation, including parent event overrides.
+- Enhanced Input adapters for mapping-context ownership, action binding and
+  removal, binding inspection, action-value conversion and deterministic input
+  injection.
+- Runtime access to the authoritative GameMode and safe deferred server travel.
+- A separately staged Python-first Third Person variant whose dynamic Python
+  GameMode, PlayerController and Character own camera, movement, look, jump and
+  locomotion-state behavior.
+- A minimal no-gameplay C++ sample host target so packaged source-plugin builds
+  link and stage UnrealEnginePython deterministically.
+- Automated reference-Blueprint inventory, headless gameplay input/travel smoke
+  and packaged Win64 gameplay smoke workflows.
+
+### Changed
+
+- Re-enabled dynamic class generation for UE 5.8 and finalized generated
+  classes only after their Python properties/functions and constructors are
+  installed.
+- Configured the UEP-owned isolated interpreter not to write bytecode caches
+  beside staged project or engine scripts.
+- Updated property discovery and conversion order for UE5 `FFieldClass`
+  declarations, UFunction return/input order and supported array/map/object,
+  struct and enum declarations.
+- Suppressed editor property-change notifications during UObject construction
+  so Python constructors can initialize default subobjects safely.
+- Added the Enhanced Input plugin/module as an explicit runtime dependency.
+- Promoted dynamic class/function and Enhanced Input lifecycle cases into the
+  required core suite; only generic `TSet` marshalling remains a known core
+  exclusion.
+
+### Validation
+
+- Shared and UEP-owned CPython 3.11 core suites pass with dynamic reflected
+  class construction, two-input return functions and a real
+  `BlueprintNativeEvent` override.
+- The Python-first Third Person smoke verifies the three active Python classes,
+  two mapping contexts, five bindings, injected movement/look/jump, camera
+  components, animation state changes and same-map travel.
+- The unchanged UE 5.8 reference assets are audited as four Blueprints with 27
+  graphs and 173 nodes; the level and content assets remain unmodified.
+- Unreal Engine source remains unchanged.
+
+### Known limitations
+
+- Generic `TSet` property marshalling is not implemented.
+- Win64 keyboard/mouse is the release-level gameplay contract; mobile touch,
+  non-Windows release lanes, networking and Lyra integration remain later
+  milestones.
+
 ## [0.1.0] - 2026-08-11
 
 ### Added

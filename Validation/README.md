@@ -10,16 +10,25 @@ does not modify Unreal Engine source code.
 The desktop-only host disables the unrelated `AndroidFileServer` plugin for
 editor, cook and packaged execution so Android deployment tooling is outside
 this acceptance contract. Its package step waits for Unreal's global UAT mutex
-instead of failing or interfering when another project is cooking.
+instead of failing or interfering when another project is cooking. It also uses
+UE's loose cooked-package writer so staging does not depend on a transient local
+Zen server remaining alive after Cook exits.
 
-## 0.1.0 release gate
+## Core release gate
 
-Version 0.1.0 is complete only when a clean full run returns exit code 0 and
-its `summary.json` reports `status: passed`, UE 5.8, Python 3.11 and all four
-required suites. The current contract contains 40 required checks: 12 shared
-core checks, 12 standalone core checks, four editor checks and 12 packaged
-core checks. Known exclusions must remain explicitly listed rather than being
-silently counted as passes.
+The core gate is complete only when a clean full run returns exit code 0 and its
+`summary.json` reports `status: passed`, UE 5.8, Python 3.11 and all four
+required suites. The 0.2.0 contract contains 46 required checks: 14 shared core
+checks, 14 standalone core checks, four editor checks and 14 packaged core
+checks. The added core cases exercise UE5 `FField`-based dynamic class/function
+generation, parent event overrides and Enhanced Input binding lifecycle. Known
+exclusions must remain explicitly listed rather than being silently counted as
+passes.
+
+The 0.2.0 release gate also requires the independent Python-first Third Person
+audit, headless gameplay smoke and packaged gameplay smoke documented in
+[`../Demos/README.md`](../Demos/README.md). A green core report alone does not
+claim gameplay parity.
 
 The validation output is local evidence and is intentionally ignored by Git.
 Source changes must be followed by a new run; an older green result is not a
@@ -53,7 +62,7 @@ contains four suites:
 
 | Suite | Interpreter ownership | Required checks |
 | --- | --- | --- |
-| core/shared | Epic `PythonScriptPlugin` | reflection, values, containers, structs, functions, delegates and GC |
+| core/shared | Epic `PythonScriptPlugin` | reflection, values, containers, structs, dynamic classes/functions, Enhanced Input binding lifecycle, delegates and GC |
 | core/standalone | UEP | the same core contract with `-DisablePython` |
 | editor/shared | Epic `PythonScriptPlugin` | Actor lifecycle, asset save/load and Slate item ownership |
 | core/packaged | UEP | cooked executable startup and the full core contract |
@@ -90,7 +99,6 @@ mode. While iterating only on Python tests, that compile can also be skipped:
 
 The suite records, but does not fail for, these known limitations:
 
-- dynamic Python-generated `UClass`/`UFunction` synthesis is disabled;
 - generic `TSet` property marshalling is not currently implemented;
 - Unreal's unattended asset deletion reference scan is not used; the driver
   removes only the exact disposable asset file after the editor process exits.

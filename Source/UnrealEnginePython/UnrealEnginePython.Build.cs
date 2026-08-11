@@ -13,10 +13,8 @@ public class UnrealEnginePython : ModuleRules
 		// value to 8, which would select UE4.8 code paths. Keep those guards on a
 		// monotonic porting feature level until each branch is removed.
 		PublicDefinitions.Add("UEP_LEGACY_ENGINE_MINOR_VERSION=58");
-		// Dynamic UClass/UFunction synthesis relied on UObject-based UProperty
-		// internals. Keep the stable reflection/runtime surface compiling first;
-		// this subsystem will be reintroduced on top of FField in a later slice.
-		PublicDefinitions.Add("UEP_WITH_DYNAMIC_CLASS_GENERATION=0");
+		// UE 5.8 dynamic Python types use the FField/FProperty reflection model.
+		PublicDefinitions.Add("UEP_WITH_DYNAMIC_CLASS_GENERATION=1");
 
 		// UE 5.8 ships and stages CPython 3.11 through this external module.
 		// Keeping Python selection in UnrealBuildTool avoids mixing CRTs or loading a
@@ -39,6 +37,7 @@ public class UnrealEnginePython : ModuleRules
 				"ApplicationCore",
 				"CoreUObject",
 				"Engine",
+				"EnhancedInput",
 				"Foliage",
 				"HTTP",
 				"InputCore",

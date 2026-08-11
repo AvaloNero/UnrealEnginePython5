@@ -29,6 +29,28 @@ PyObject *py_ue_world_exec(ue_PyUObject *self, PyObject * args)
 
 }
 
+PyObject *py_ue_server_travel(ue_PyUObject *self, PyObject * args)
+{
+	ue_py_check(self);
+
+	char *url = nullptr;
+	PyObject *py_absolute = nullptr;
+	PyObject *py_skip_game_notify = nullptr;
+	if (!PyArg_ParseTuple(args, "s|OO:server_travel", &url, &py_absolute, &py_skip_game_notify))
+	{
+		return nullptr;
+	}
+
+	UWorld *world = ue_get_uworld(self);
+	if (!world)
+		return PyErr_Format(PyExc_Exception, "unable to retrieve UWorld from uobject");
+
+	const bool absolute = py_absolute && PyObject_IsTrue(py_absolute);
+	const bool skip_game_notify = py_skip_game_notify && PyObject_IsTrue(py_skip_game_notify);
+	return PyBool_FromLong(
+		world->ServerTravel(UTF8_TO_TCHAR(url), absolute, skip_game_notify) ? 1 : 0);
+}
+
 PyObject *py_ue_quit_game(ue_PyUObject *self, PyObject * args)
 {
 

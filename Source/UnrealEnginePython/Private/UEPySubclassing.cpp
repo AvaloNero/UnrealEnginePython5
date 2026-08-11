@@ -2,6 +2,11 @@
 #include "PythonClass.h"
 #include "UObject/UEPyObject.h"
 
+#if WITH_EDITOR
+#include "Editor.h"
+#include "Editor/BlueprintGraph/Public/BlueprintActionDatabase.h"
+#endif
+
 #if UEP_WITH_DYNAMIC_CLASS_GENERATION
 
 // hack for avoiding loops in class constructors (thanks to the Unreal.js project for the idea)
@@ -14,6 +19,121 @@ static void UEPyClassConstructor(UClass *u_class, const FObjectInitializer &Obje
 	}
 	u_class->ClassConstructor(ObjectInitializer);
 	ue_py_class_constructor_placeholder = nullptr;
+}
+
+static bool UEPyResolvePropertyDeclaration(
+	PyObject* value,
+	FFieldClass*& field_class,
+	PyObject*& type_metadata)
+{
+	field_class = ue_py_get_ffield_class_from_capsule(value);
+	type_metadata = nullptr;
+	if (field_class)
+	{
+		return true;
+	}
+
+	ue_PyUObject* py_uobject = ue_is_pyuobject(value);
+	if (!py_uobject)
+	{
+		return false;
+	}
+
+	if (py_uobject->ue_object->IsA<UClass>())
+	{
+		field_class = FObjectProperty::StaticClass();
+		type_metadata = value;
+		return true;
+	}
+	if (py_uobject->ue_object->IsA<UScriptStruct>())
+	{
+		field_class = FStructProperty::StaticClass();
+		type_metadata = value;
+		return true;
+	}
+	if (py_uobject->ue_object->IsA<UEnum>())
+	{
+		field_class = FEnumProperty::StaticClass();
+		type_metadata = value;
+		return true;
+	}
+
+	return false;
+}
+
+static int UEPyTryAddClassProperty(ue_PyUObject* self, const char* name, PyObject* value)
+{
+	FFieldClass* first_field_class = nullptr;
+	FFieldClass* second_field_class = nullptr;
+	PyObject* first_metadata = nullptr;
+	PyObject* second_metadata = nullptr;
+	PyObject* declaration = nullptr;
+	PyObject* call_args = nullptr;
+
+	if (UEPyResolvePropertyDeclaration(value, first_field_class, first_metadata))
+	{
+		declaration = ue_py_new_ffield_class_capsule(first_field_class);
+		call_args = PyTuple_New(first_metadata ? 3 : 2);
+	}
+	else if (PyList_Check(value) && PyList_Size(value) == 1 &&
+		UEPyResolvePropertyDeclaration(PyList_GetItem(value, 0), first_field_class, first_metadata))
+	{
+		declaration = PyList_New(1);
+		PyList_SET_ITEM(declaration, 0, ue_py_new_ffield_class_capsule(first_field_class));
+		call_args = PyTuple_New(first_metadata ? 3 : 2);
+	}
+	else if (PyDict_Check(value) && PyDict_Size(value) == 1)
+	{
+		PyObject* map_key = nullptr;
+		PyObject* map_value = nullptr;
+		Py_ssize_t position = 0;
+		PyDict_Next(value, &position, &map_key, &map_value);
+		if (!UEPyResolvePropertyDeclaration(map_key, first_field_class, first_metadata) ||
+			!UEPyResolvePropertyDeclaration(map_value, second_field_class, second_metadata))
+		{
+			return 0;
+		}
+
+		declaration = PyList_New(2);
+		PyList_SET_ITEM(declaration, 0, ue_py_new_ffield_class_capsule(first_field_class));
+		PyList_SET_ITEM(declaration, 1, ue_py_new_ffield_class_capsule(second_field_class));
+		call_args = PyTuple_New(4);
+	}
+	else
+	{
+		return 0;
+	}
+
+	if (!declaration || !call_args)
+	{
+		Py_XDECREF(declaration);
+		Py_XDECREF(call_args);
+		return -1;
+	}
+
+	PyTuple_SET_ITEM(call_args, 0, declaration);
+	PyTuple_SET_ITEM(call_args, 1, PyUnicode_FromString(name));
+	if (PyTuple_Size(call_args) >= 3)
+	{
+		PyObject* metadata = first_metadata ? first_metadata : Py_None;
+		Py_INCREF(metadata);
+		PyTuple_SET_ITEM(call_args, 2, metadata);
+	}
+	if (PyTuple_Size(call_args) == 4)
+	{
+		PyObject* metadata = second_metadata ? second_metadata : Py_None;
+		Py_INCREF(metadata);
+		PyTuple_SET_ITEM(call_args, 3, metadata);
+	}
+
+	PyObject* result = py_ue_add_property(self, call_args);
+	Py_DECREF(call_args);
+	if (!result)
+	{
+		return -1;
+	}
+	Py_DECREF(result);
+	return 1;
 }
 
 int unreal_engine_py_init(ue_PyUObject *self, PyObject *args, PyObject *kwds)
@@ -78,150 +198,19 @@ int unreal_engine_py_init(ue_PyUObject *self, PyObject *args, PyObject *kwds)
 				PyDict_SetItem(py_additional_properties, key, value);
 				prop_added = true;
 			}
-			// add simple property
-			else if (ue_is_pyuobject(value))
+			else
 			{
-				ue_PyUObject *py_obj = (ue_PyUObject *)value;
-				if (py_obj->ue_object->IsA<UClass>())
+				const int add_property_result = UEPyTryAddClassProperty(self, class_key, value);
+				if (add_property_result < 0)
 				{
-					UClass *p_class = (UClass *)py_obj->ue_object;
-					if (p_class->IsChildOf<FProperty>())
-					{
-						if (!py_ue_add_property(self, Py_BuildValue("(Os)", value, class_key)))
-						{
-							unreal_engine_py_log_error();
-							return -1;
-						}
-						prop_added = true;
-					}
-					else
-					{
-						if (!py_ue_add_property(self, Py_BuildValue("(OsO)", (PyObject *)ue_get_python_uobject(FObjectProperty::StaticClass()), class_key, value)))
-						{
-							unreal_engine_py_log_error();
-							return -1;
-						}
-						prop_added = true;
-					}
+					unreal_engine_py_log_error();
+					return -1;
 				}
-				else if (py_obj->ue_object->IsA<UScriptStruct>())
-				{
-					if (!py_ue_add_property(self, Py_BuildValue("(OsO)", (PyObject *)ue_get_python_uobject(FStructProperty::StaticClass()), class_key, value)))
-					{
-						unreal_engine_py_log_error();
-						return -1;
-					}
-					prop_added = true;
-				}
+				prop_added = add_property_result > 0;
 			}
 
-			// add array property
-			else if (PyList_Check(value))
-			{
-				if (PyList_Size(value) == 1)
-				{
-					PyObject *first_item = PyList_GetItem(value, 0);
-					if (ue_is_pyuobject(first_item))
-					{
-						ue_PyUObject *py_obj = (ue_PyUObject *)first_item;
-						if (py_obj->ue_object->IsA<UClass>())
-						{
-							UClass *p_class = (UClass *)py_obj->ue_object;
-							if (p_class->IsChildOf<FProperty>())
-							{
-								if (!py_ue_add_property(self, Py_BuildValue("(Os)", value, class_key)))
-								{
-									unreal_engine_py_log_error();
-									return -1;
-								}
-								prop_added = true;
-							}
-
-							else
-							{
-								if (!py_ue_add_property(self, Py_BuildValue("([O]sO)", (PyObject *)ue_get_python_uobject(FObjectProperty::StaticClass()), class_key, first_item)))
-								{
-									unreal_engine_py_log_error();
-									return -1;
-								}
-								prop_added = true;
-							}
-						}
-						else if (py_obj->ue_object->IsA<UScriptStruct>())
-						{
-							if (!py_ue_add_property(self, Py_BuildValue("([O]sO)", (PyObject *)ue_get_python_uobject(FStructProperty::StaticClass()), class_key, first_item)))
-							{
-								unreal_engine_py_log_error();
-								return -1;
-							}
-							prop_added = true;
-						}
-					}
-
-				}
-			}
-#if UEP_LEGACY_ENGINE_MINOR_VERSION >= 15
-			else if (PyDict_Check(value))
-			{
-				if (PyDict_Size(value) == 1)
-				{
-					PyObject *py_key = nullptr;
-					PyObject *py_value = nullptr;
-					Py_ssize_t pos = 0;
-					PyDict_Next(value, &pos, &py_key, &py_value);
-					if (ue_is_pyuobject(py_key) && ue_is_pyuobject(py_value))
-					{
-						PyObject *first_item = nullptr;
-						PyObject *second_item = nullptr;
-
-						ue_PyUObject *py_obj = (ue_PyUObject *)py_key;
-						if (py_obj->ue_object->IsA<UClass>())
-						{
-							UClass *p_class = (UClass *)py_obj->ue_object;
-							if (p_class->IsChildOf<FProperty>())
-							{
-								first_item = py_key;
-							}
-							else
-							{
-								first_item = (PyObject *)ue_get_python_uobject(FObjectProperty::StaticClass());
-							}
-						}
-						else if (py_obj->ue_object->IsA<UScriptStruct>())
-						{
-							first_item = (PyObject *)ue_get_python_uobject(FStructProperty::StaticClass());
-						}
-
-						ue_PyUObject *py_obj2 = (ue_PyUObject *)py_value;
-						if (py_obj2->ue_object->IsA<UClass>())
-						{
-							UClass *p_class = (UClass *)py_obj2->ue_object;
-							if (p_class->IsChildOf<FProperty>())
-							{
-								second_item = py_value;
-							}
-							else
-							{
-								second_item = (PyObject *)ue_get_python_uobject(FObjectProperty::StaticClass());
-							}
-						}
-						else if (py_obj2->ue_object->IsA<UScriptStruct>())
-						{
-							second_item = (PyObject *)ue_get_python_uobject(FStructProperty::StaticClass());
-						}
-
-						if (!py_ue_add_property(self, Py_BuildValue("([OO]sOO)", first_item, second_item, class_key, py_key, py_value)))
-						{
-							unreal_engine_py_log_error();
-							return -1;
-						}
-						prop_added = true;
-					}
-				}
-			}
-#endif
 			// function ?
-			else if (PyCallable_Check(value) && class_key[0] >= 'A' && class_key[0] <= 'Z')
+			if (!prop_added && PyCallable_Check(value) && class_key[0] >= 'A' && class_key[0] <= 'Z')
 			{
 				uint32 func_flags = FUNC_Native | FUNC_BlueprintCallable | FUNC_Public;
 				PyObject *is_event = PyObject_GetAttrString(value, (char *)"event");
@@ -421,88 +410,32 @@ int unreal_engine_py_init(ue_PyUObject *self, PyObject *args, PyObject *kwds)
 			}
 		};
 
-
-
-		if (self->py_dict)
-		{
-			ue_PyUObject *new_default_self = ue_get_python_uobject(new_u_py_class->ClassDefaultObject);
-
-			if (!new_default_self)
-			{
-				unreal_engine_py_log_error();
-				UE_LOG(LogPython, Error, TEXT("unable to set dict on new ClassDefaultObject"));
-				return -1;
-			}
-			PyObject *keys = PyDict_Keys(self->py_dict);
-
-			Py_ssize_t keys_len = PyList_Size(keys);
-			for (Py_ssize_t i = 0; i < keys_len; i++)
-			{
-				PyObject *key = PyList_GetItem(keys, i);
-				PyObject *value = PyDict_GetItem(self->py_dict, key);
-				// special case to bound function to method
-				if (PyFunction_Check(value))
-				{
-					PyObject *bound_function = PyObject_CallMethod(value, (char*)"__get__", (char*)"O", (PyObject *)new_default_self);
-					if (bound_function)
-					{
-						PyObject_SetAttr((PyObject *)new_default_self, key, bound_function);
-						Py_DECREF(bound_function);
-					}
-					else
-					{
-						unreal_engine_py_log_error();
-					}
-				}
-				else
-				{
-					PyObject_SetAttr((PyObject *)new_default_self, key, value);
-				}
-			}
-			Py_DECREF(keys);
-		}
-
-		// add default uproperties values
-		if (py_additional_properties)
-		{
-			ue_PyUObject *new_default_self = ue_get_python_uobject(new_u_py_class->ClassDefaultObject);
-			if (!new_default_self)
-			{
-				unreal_engine_py_log_error();
-				UE_LOG(LogPython, Error, TEXT("unable to set properties on new ClassDefaultObject"));
-				return -1;
-			}
-			PyObject *keys = PyDict_Keys(py_additional_properties);
-			Py_ssize_t keys_len = PyList_Size(keys);
-			for (Py_ssize_t i = 0; i < keys_len; i++)
-			{
-				PyObject *key = PyList_GetItem(keys, i);
-				PyObject *value = PyDict_GetItem(py_additional_properties, key);
-
-				PyObject_SetAttr((PyObject *)new_default_self, key, value);
-			}
-			Py_DECREF(keys);
-		}
-
-		// add custom constructor (__init__)
-		PyObject *py_init = PyDict_GetItemString(class_attributes, (char *)"__init__");
+		// Install the Python constructor before creating the CDO. The class
+		// constructor above copies Python attributes and calls __init__ for both
+		// the CDO and every later instance.
+		PyObject* py_init = PyDict_GetItemString(class_attributes, (char*)"__init__");
 		if (py_init && PyCallable_Check(py_init))
 		{
-			// fake initializer
-			FObjectInitializer initializer(new_u_py_class->ClassDefaultObject, nullptr, false, true);
 			new_u_py_class->SetPyConstructor(py_init);
-			ue_PyUObject *new_default_self = ue_get_python_uobject(new_u_py_class->ClassDefaultObject);
-
-			if (!new_default_self)
-			{
-				unreal_engine_py_log_error();
-				UE_LOG(LogPython, Error, TEXT("unable to call __init__ on new ClassDefaultObject"));
-				return -1;
-			}
-
-			new_u_py_class->CallPyConstructor(new_default_self);
 		}
 
+		new_u_py_class->Bind();
+		new_u_py_class->StaticLink(true);
+		new_u_py_class->AssembleReferenceTokenStream();
+		if (!new_u_py_class->GetDefaultObject())
+		{
+			PyErr_Format(PyExc_RuntimeError, "unable to create the CDO for dynamic class %s", name);
+			return -1;
+		}
+
+#if WITH_EDITOR
+		new_u_py_class->PostEditChange();
+		new_u_py_class->PostLinkerChange();
+		if (GEditor)
+		{
+			FBlueprintActionDatabase::Get().RefreshClassActions(new_u_py_class);
+		}
+#endif
 	}
 
 	return 0;

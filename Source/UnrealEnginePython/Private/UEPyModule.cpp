@@ -58,6 +58,7 @@
 #include "Wrappers/UEPyFColor.h"
 #include "Wrappers/UEPyFLinearColor.h"
 #include "Wrappers/UEPyFSocket.h"
+#include "UObject/UObjectThreadContext.h"
 #include "Wrappers/UEPyFQuat.h"
 
 #include "Wrappers/UEPyFRawAnimSequenceTrack.h"
@@ -782,6 +783,13 @@ static PyMethodDef ue_PyUObject_methods[] = {
 	{ "bind_key", (PyCFunction)py_ue_bind_key, METH_VARARGS, "" },
 	{ "bind_pressed_key", (PyCFunction)py_ue_bind_pressed_key, METH_VARARGS, "" },
 	{ "bind_released_key", (PyCFunction)py_ue_bind_released_key, METH_VARARGS, "" },
+	{ "bind_enhanced_action", (PyCFunction)py_ue_bind_enhanced_action, METH_VARARGS, "" },
+	{ "remove_enhanced_action_binding", (PyCFunction)py_ue_remove_enhanced_action_binding, METH_VARARGS, "" },
+	{ "get_enhanced_action_binding_count", (PyCFunction)py_ue_get_enhanced_action_binding_count, METH_VARARGS, "" },
+	{ "add_enhanced_input_mapping_context", (PyCFunction)py_ue_add_enhanced_input_mapping_context, METH_VARARGS, "" },
+	{ "remove_enhanced_input_mapping_context", (PyCFunction)py_ue_remove_enhanced_input_mapping_context, METH_VARARGS, "" },
+	{ "has_enhanced_input_mapping_context", (PyCFunction)py_ue_has_enhanced_input_mapping_context, METH_VARARGS, "" },
+	{ "inject_enhanced_input_for_action", (PyCFunction)py_ue_inject_enhanced_input_for_action, METH_VARARGS, "" },
 
 	{ "input_key", (PyCFunction)py_ue_input_key, METH_VARARGS, "" },
 	{ "input_axis", (PyCFunction)py_ue_input_axis, METH_VARARGS, "" },
@@ -842,6 +850,7 @@ static PyMethodDef ue_PyUObject_methods[] = {
 
 	{ "actor_create_default_subobject", (PyCFunction)py_ue_actor_create_default_subobject, METH_VARARGS, "" },
 	{ "create_default_subobject", (PyCFunction)py_ue_actor_create_default_subobject, METH_VARARGS, "" },
+	{ "setup_attachment", (PyCFunction)py_ue_setup_attachment, METH_VARARGS, "" },
 
 	{ "actor_begin_play", (PyCFunction)py_ue_actor_begin_play, METH_VARARGS, "" },
 
@@ -860,6 +869,7 @@ static PyMethodDef ue_PyUObject_methods[] = {
 	{ "get_world_type", (PyCFunction)py_ue_get_world_type, METH_VARARGS, "" },
 
 	{ "world_exec", (PyCFunction)py_ue_world_exec, METH_VARARGS, "" },
+	{ "server_travel", (PyCFunction)py_ue_server_travel, METH_VARARGS, "" },
 
 	{ "simple_move_to_location", (PyCFunction)py_ue_simple_move_to_location, METH_VARARGS, "" },
 
@@ -975,6 +985,7 @@ static PyMethodDef ue_PyUObject_methods[] = {
 	{ "set_player_hud", (PyCFunction)py_ue_set_player_hud, METH_VARARGS, "" },
 	{ "get_player_camera_manager", (PyCFunction)py_ue_get_player_camera_manager, METH_VARARGS, "" },
 	{ "get_player_pawn", (PyCFunction)py_ue_get_player_pawn, METH_VARARGS, "" },
+	{ "get_auth_game_mode", (PyCFunction)py_ue_get_auth_game_mode, METH_VARARGS, "" },
 	{ "restart_level", (PyCFunction)py_ue_restart_level, METH_VARARGS, "" },
 
 	{ "get_overlapping_actors", (PyCFunction)py_ue_get_overlapping_actors, METH_VARARGS, "" },
@@ -1332,30 +1343,42 @@ static int ue_PyUObject_setattro(ue_PyUObject* self, PyObject* attr_name, PyObje
 		if (u_property)
 		{
 #if WITH_EDITOR
-			self->ue_object->PreEditChange(u_property);
+			// Dynamic Python constructors assign reflected properties while the
+			// FObjectInitializer is still active. Editor notifications at this point
+			// can register partially-built components (notably UCameraComponent) and
+			// violate UObject constructor invariants. Native constructors likewise do
+			// not emit property-edit notifications for their initialization writes.
+			const bool notify_editor = FUObjectThreadContext::Get().TopInitializer() == nullptr;
+			if (notify_editor)
+			{
+				self->ue_object->PreEditChange(u_property);
+			}
 #endif
 			if (ue_py_convert_pyobject(value, u_property, (uint8*)self->ue_object, 0))
 			{
 #if WITH_EDITOR
-				FPropertyChangedEvent PropertyEvent(u_property, EPropertyChangeType::ValueSet);
-				self->ue_object->PostEditChangeProperty(PropertyEvent);
-
-				if (self->ue_object->HasAnyFlags(RF_ArchetypeObject | RF_ClassDefaultObject))
+				if (notify_editor)
 				{
-					TArray<UObject*> Instances;
-					self->ue_object->GetArchetypeInstances(Instances);
-					for (UObject* Instance : Instances)
+					FPropertyChangedEvent PropertyEvent(u_property, EPropertyChangeType::ValueSet);
+					self->ue_object->PostEditChangeProperty(PropertyEvent);
+
+					if (self->ue_object->HasAnyFlags(RF_ArchetypeObject | RF_ClassDefaultObject))
 					{
-						Instance->PreEditChange(u_property);
-						if (ue_py_convert_pyobject(value, u_property, (uint8*)Instance, 0))
+						TArray<UObject*> Instances;
+						self->ue_object->GetArchetypeInstances(Instances);
+						for (UObject* Instance : Instances)
 						{
-							FPropertyChangedEvent InstancePropertyEvent(u_property, EPropertyChangeType::ValueSet);
-							Instance->PostEditChangeProperty(InstancePropertyEvent);
-						}
-						else
-						{
-							PyErr_SetString(PyExc_ValueError, "invalid value for FProperty");
-							return -1;
+							Instance->PreEditChange(u_property);
+							if (ue_py_convert_pyobject(value, u_property, (uint8*)Instance, 0))
+							{
+								FPropertyChangedEvent InstancePropertyEvent(u_property, EPropertyChangeType::ValueSet);
+								Instance->PostEditChangeProperty(InstancePropertyEvent);
+							}
+							else
+							{
+								PyErr_SetString(PyExc_ValueError, "invalid value for FProperty");
+								return -1;
+							}
 						}
 					}
 				}
@@ -1533,100 +1556,42 @@ static PyTypeObject ue_PyUObjectType = {
 #if UEP_WITH_DYNAMIC_CLASS_GENERATION
 UClass* unreal_engine_new_uclass(char* name, UClass* outer_parent)
 {
-	bool is_overwriting = false;
-
+	UClass* parent = outer_parent ? outer_parent : UObject::StaticClass();
 	UObject* outer = GetTransientPackage();
-	UClass* parent = UObject::StaticClass();
+	const FName class_name(UTF8_TO_TCHAR(name));
 
-	if (outer_parent)
+	if (FindObject<UPythonClass>(outer, *class_name.ToString()))
 	{
-		parent = outer_parent;
-		outer = parent->GetOuter();
+		PyErr_Format(PyExc_RuntimeError, "dynamic class %s is already registered", name);
+		return nullptr;
 	}
 
-	UClass* new_object = ue_py_find_first_object<UClass>(UTF8_TO_TCHAR(name));
+	UPythonClass* new_object = NewObject<UPythonClass>(
+		outer,
+		class_name,
+		RF_Public | RF_Transient);
 	if (!new_object)
 	{
-		new_object = NewObject<UPythonClass>(outer, UTF8_TO_TCHAR(name), RF_Public | RF_Transient | RF_MarkAsNative);
-		if (!new_object)
-			return nullptr;
-	}
-	else
-	{
-		UE_LOG(LogPython, Warning, TEXT("Preparing for overwriting class %s ..."), UTF8_TO_TCHAR(name));
-		is_overwriting = true;
+		PyErr_Format(PyExc_RuntimeError, "unable to allocate dynamic class %s", name);
+		return nullptr;
 	}
 
-	if (is_overwriting && new_object->Children)
-	{
-		UField* u_field = new_object->Children;
-		while (u_field)
-		{
-			if (u_field->IsA<UFunction>())
-			{
-				UE_LOG(LogPython, Warning, TEXT("removing function %s"), *u_field->GetName());
-				new_object->RemoveFunctionFromFunctionMap((UFunction*)u_field);
-				FLinkerLoad::InvalidateExport(u_field);
-			}
-			u_field = u_field->Next;
-		}
-		new_object->ClearFunctionMapsCaches();
-		new_object->PurgeClass(true);
-		new_object->Children = nullptr;
-		new_object->ClassAddReferencedObjects = parent->ClassAddReferencedObjects;
-	}
-
-	new_object->PropertiesSize = 0;
-
-	new_object->ClassConstructor = parent->ClassConstructor;
+	// Follow UE5's generated-class construction order: establish inheritance and
+	// reflected members first, then Bind/StaticLink and create the CDO once from
+	// unreal_engine_py_init after Python functions and properties are installed.
 	new_object->SetSuperStruct(parent);
-
-	new_object->PropertyLink = parent->PropertyLink;
+	new_object->ClassConstructor = parent->ClassConstructor;
 	new_object->ClassWithin = parent->ClassWithin;
 	new_object->ClassConfigName = parent->ClassConfigName;
-
 	new_object->ClassFlags |= (parent->ClassFlags & (CLASS_Inherit | CLASS_ScriptInherit));
-	new_object->ClassFlags |= CLASS_Native;
+	new_object->ClassCastFlags = parent->ClassCastFlags;
+	new_object->CppClassStaticFunctions = parent->CppClassStaticFunctions;
 
 #if WITH_EDITOR
 	new_object->SetMetaData(FBlueprintMetadata::MD_AllowableBlueprintVariableType, TEXT("true"));
 	if (new_object->IsChildOf<UActorComponent>())
 	{
 		new_object->SetMetaData(FBlueprintMetadata::MD_BlueprintSpawnableComponent, TEXT("true"));
-	}
-#endif
-
-	new_object->ClassCastFlags = parent->ClassCastFlags;
-
-
-	new_object->Bind();
-	new_object->StaticLink(true);
-
-	// it could be a class update
-	if (is_overwriting && new_object->ClassDefaultObject)
-	{
-		new_object->GetDefaultObject()->RemoveFromRoot();
-		new_object->GetDefaultObject()->ConditionalBeginDestroy();
-		new_object->ClassDefaultObject = nullptr;
-	}
-
-#if WITH_EDITOR
-	new_object->PostEditChange();
-#endif
-
-	new_object->GetDefaultObject()->PostInitProperties();
-
-#if WITH_EDITOR
-	new_object->PostLinkerChange();
-#endif
-
-	new_object->AssembleReferenceTokenStream();
-
-#if WITH_EDITOR
-	// this is required for avoiding startup crashes #405
-	if (GEditor)
-	{
-		FBlueprintActionDatabase::Get().RefreshClassActions(new_object);
 	}
 #endif
 
@@ -2787,6 +2752,24 @@ FProperty* ue_py_get_fproperty_from_capsule(PyObject* Object)
 	return static_cast<FProperty*>(PyCapsule_GetPointer(Object, "unreal_engine.FProperty"));
 }
 
+PyObject* ue_py_new_ffield_class_capsule(FFieldClass* FieldClass)
+{
+	if (!FieldClass)
+	{
+		Py_RETURN_NONE;
+	}
+	return PyCapsule_New(FieldClass, "unreal_engine.FFieldClass", nullptr);
+}
+
+FFieldClass* ue_py_get_ffield_class_from_capsule(PyObject* Object)
+{
+	if (!PyCapsule_IsValid(Object, "unreal_engine.FFieldClass"))
+	{
+		return nullptr;
+	}
+	return static_cast<FFieldClass*>(PyCapsule_GetPointer(Object, "unreal_engine.FFieldClass"));
+}
+
 
 // check if a python object is a wrapper to a UObject
 ue_PyUObject* ue_is_pyuobject(PyObject* obj)
@@ -3224,6 +3207,8 @@ UFunction* unreal_engine_add_function(UClass* u_class, char* name, PyObject* py_
 		function->SetSuperStruct(parent_function);
 		function_flags |= (parent_function->FunctionFlags & FUNC_FuncInherit);
 	}
+	function->FunctionFlags = static_cast<EFunctionFlags>(function_flags);
+	u_class->AddNativeFunction(name, &UPythonFunction::CallPythonCallable);
 
 	// iterate all arguments using inspect.signature()
 	// this is required to maintaining args order
@@ -3246,10 +3231,8 @@ UFunction* unreal_engine_add_function(UClass* u_class, char* name, PyObject* py_
 
 	PyObject* annotations = PyObject_GetAttrString(py_callable, "__annotations__");
 
-	UField** next_property = &function->Children;
-	FProperty** next_property_link = &function->PropertyLink;
-
 	PyObject* parameters_keys = PyObject_GetIter(parameters);
+	TArray<FProperty*> argument_properties;
 	// do not process args if no annotations are available
 
 	while (annotations)
@@ -3275,60 +3258,60 @@ UFunction* unreal_engine_add_function(UClass* u_class, char* name, PyObject* py_
 		{
 			if ((PyTypeObject*)value == &PyFloat_Type)
 			{
-				prop = NewObject<FFloatProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
+				prop = new FFloatProperty(function, UTF8_TO_TCHAR(p_name));
 			}
 			else if ((PyTypeObject*)value == &PyUnicode_Type)
 			{
-				prop = NewObject<FStrProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
+				prop = new FStrProperty(function, UTF8_TO_TCHAR(p_name));
 			}
 			else if ((PyTypeObject*)value == &PyBool_Type)
 			{
-				prop = NewObject<FBoolProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
+				prop = new FBoolProperty(function, UTF8_TO_TCHAR(p_name));
 			}
 			else if ((PyTypeObject*)value == &PyLong_Type)
 			{
-				prop = NewObject<FIntProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
+				prop = new FIntProperty(function, UTF8_TO_TCHAR(p_name));
 			}
 			else if ((PyTypeObject*)value == &ue_PyFVectorType)
 			{
-				FStructProperty* prop_struct = NewObject<FStructProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
+				FStructProperty* prop_struct = new FStructProperty(function, UTF8_TO_TCHAR(p_name));
 				prop_struct->Struct = TBaseStructure<FVector>::Get();
 				prop = prop_struct;
 			}
 			else if ((PyTypeObject*)value == &ue_PyFVector2DType)
 			{
-				FStructProperty* prop_struct = NewObject<FStructProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
+				FStructProperty* prop_struct = new FStructProperty(function, UTF8_TO_TCHAR(p_name));
 				prop_struct->Struct = TBaseStructure<FVector2D>::Get();
 				prop = prop_struct;
 			}
 			else if ((PyTypeObject*)value == &ue_PyFRotatorType)
 			{
-				FStructProperty* prop_struct = NewObject<FStructProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
+				FStructProperty* prop_struct = new FStructProperty(function, UTF8_TO_TCHAR(p_name));
 				prop_struct->Struct = TBaseStructure<FRotator>::Get();
 				prop = prop_struct;
 			}
 			else if ((PyTypeObject*)value == &ue_PyFLinearColorType)
 			{
-				FStructProperty* prop_struct = NewObject<FStructProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
+				FStructProperty* prop_struct = new FStructProperty(function, UTF8_TO_TCHAR(p_name));
 				prop_struct->Struct = TBaseStructure<FLinearColor>::Get();
 				prop = prop_struct;
 			}
 			else if ((PyTypeObject*)value == &ue_PyFColorType)
 			{
-				FStructProperty* prop_struct = NewObject<FStructProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
+				FStructProperty* prop_struct = new FStructProperty(function, UTF8_TO_TCHAR(p_name));
 				prop_struct->Struct = TBaseStructure<FColor>::Get();
 				prop = prop_struct;
 			}
 			else if ((PyTypeObject*)value == &ue_PyFTransformType)
 			{
-				FStructProperty* prop_struct = NewObject<FStructProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
+				FStructProperty* prop_struct = new FStructProperty(function, UTF8_TO_TCHAR(p_name));
 				prop_struct->Struct = TBaseStructure<FTransform>::Get();
 				prop = prop_struct;
 			}
 #if UEP_LEGACY_ENGINE_MINOR_VERSION > 18
 			else if ((PyTypeObject*)value == &ue_PyFQuatType)
 			{
-				FStructProperty* prop_struct = NewObject<FStructProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
+				FStructProperty* prop_struct = new FStructProperty(function, UTF8_TO_TCHAR(p_name));
 				prop_struct->Struct = TBaseStructure<FQuat>::Get();
 				prop = prop_struct;
 			}
@@ -3362,7 +3345,7 @@ UFunction* unreal_engine_add_function(UClass* u_class, char* name, PyObject* py_
 					UE_LOG(LogPython, Error, TEXT("type for %s must be a UClass"), UTF8_TO_TCHAR(name));
 					return nullptr;
 				}
-				FClassProperty* prop_class = NewObject<FClassProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
+				FClassProperty* prop_class = new FClassProperty(function, UTF8_TO_TCHAR(p_name));
 				prop_class->SetMetaClass((UClass*)py_obj->ue_object);
 				prop_class->PropertyClass = UClass::StaticClass();
 				prop = prop_class;
@@ -3374,15 +3357,15 @@ UFunction* unreal_engine_add_function(UClass* u_class, char* name, PyObject* py_
 			if (py_obj->ue_object->IsA<UClass>())
 			{
 				UClass* p_u_class = (UClass*)py_obj->ue_object;
-				FObjectProperty* prop_base = NewObject<FObjectProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
+				FObjectProperty* prop_base = new FObjectProperty(function, UTF8_TO_TCHAR(p_name));
 				prop_base->SetPropertyClass(p_u_class);
 				prop = prop_base;
 			}
 #if UEP_LEGACY_ENGINE_MINOR_VERSION > 17
 			else if (py_obj->ue_object->IsA<UEnum>())
 			{
-				FEnumProperty* prop_enum = NewObject<FEnumProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
-				FNumericProperty* prop_underlying = NewObject<FByteProperty>(prop_enum, TEXT("UnderlyingType"), RF_Public);
+				FEnumProperty* prop_enum = new FEnumProperty(function, UTF8_TO_TCHAR(p_name));
+				FNumericProperty* prop_underlying = new FByteProperty(prop_enum, TEXT("UnderlyingType"));
 				prop_enum->SetEnum((UEnum*)py_obj->ue_object);
 				prop_enum->AddCppProperty(prop_underlying);
 				prop = prop_enum;
@@ -3390,7 +3373,7 @@ UFunction* unreal_engine_add_function(UClass* u_class, char* name, PyObject* py_
 #endif
 			else if (py_obj->ue_object->IsA<UStruct>())
 			{
-				FStructProperty* prop_struct = NewObject<FStructProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
+				FStructProperty* prop_struct = new FStructProperty(function, UTF8_TO_TCHAR(p_name));
 				prop_struct->Struct = (UScriptStruct*)py_obj->ue_object;
 				prop = prop_struct;
 			}
@@ -3399,10 +3382,7 @@ UFunction* unreal_engine_add_function(UClass* u_class, char* name, PyObject* py_
 		if (prop)
 		{
 			prop->SetPropertyFlags(CPF_Parm);
-			*next_property = prop;
-			next_property = &prop->Next;
-			*next_property_link = prop;
-			next_property_link = &prop->PropertyLinkNext;
+			argument_properties.Add(prop);
 			UE_LOG(LogPython, Warning, TEXT("added prop %s"), UTF8_TO_TCHAR(p_name));
 		}
 		else
@@ -3424,60 +3404,60 @@ UFunction* unreal_engine_add_function(UClass* u_class, char* name, PyObject* py_
 			{
 				if ((PyTypeObject*)py_return_value == &PyFloat_Type)
 				{
-					prop = NewObject<FFloatProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
+					prop = new FFloatProperty(function, UTF8_TO_TCHAR(p_name));
 				}
 				else if ((PyTypeObject*)py_return_value == &PyUnicode_Type)
 				{
-					prop = NewObject<FStrProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
+					prop = new FStrProperty(function, UTF8_TO_TCHAR(p_name));
 				}
 				else if ((PyTypeObject*)py_return_value == &PyBool_Type)
 				{
-					prop = NewObject<FBoolProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
+					prop = new FBoolProperty(function, UTF8_TO_TCHAR(p_name));
 				}
 				else if ((PyTypeObject*)py_return_value == &PyLong_Type)
 				{
-					prop = NewObject<FIntProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
+					prop = new FIntProperty(function, UTF8_TO_TCHAR(p_name));
 				}
 				else if ((PyTypeObject*)py_return_value == &ue_PyFVectorType)
 				{
-					FStructProperty* prop_struct = NewObject<FStructProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
+					FStructProperty* prop_struct = new FStructProperty(function, UTF8_TO_TCHAR(p_name));
 					prop_struct->Struct = TBaseStructure<FVector>::Get();
 					prop = prop_struct;
 				}
 				else if ((PyTypeObject*)py_return_value == &ue_PyFVector2DType)
 				{
-					FStructProperty* prop_struct = NewObject<FStructProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
+					FStructProperty* prop_struct = new FStructProperty(function, UTF8_TO_TCHAR(p_name));
 					prop_struct->Struct = TBaseStructure<FVector2D>::Get();
 					prop = prop_struct;
 				}
 				else if ((PyTypeObject*)py_return_value == &ue_PyFRotatorType)
 				{
-					FStructProperty* prop_struct = NewObject<FStructProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
+					FStructProperty* prop_struct = new FStructProperty(function, UTF8_TO_TCHAR(p_name));
 					prop_struct->Struct = TBaseStructure<FRotator>::Get();
 					prop = prop_struct;
 				}
 				else if ((PyTypeObject*)py_return_value == &ue_PyFLinearColorType)
 				{
-					FStructProperty* prop_struct = NewObject<FStructProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
+					FStructProperty* prop_struct = new FStructProperty(function, UTF8_TO_TCHAR(p_name));
 					prop_struct->Struct = TBaseStructure<FLinearColor>::Get();
 					prop = prop_struct;
 				}
 				else if ((PyTypeObject*)py_return_value == &ue_PyFColorType)
 				{
-					FStructProperty* prop_struct = NewObject<FStructProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
+					FStructProperty* prop_struct = new FStructProperty(function, UTF8_TO_TCHAR(p_name));
 					prop_struct->Struct = TBaseStructure<FColor>::Get();
 					prop = prop_struct;
 				}
 				else if ((PyTypeObject*)py_return_value == &ue_PyFTransformType)
 				{
-					FStructProperty* prop_struct = NewObject<FStructProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
+					FStructProperty* prop_struct = new FStructProperty(function, UTF8_TO_TCHAR(p_name));
 					prop_struct->Struct = TBaseStructure<FTransform>::Get();
 					prop = prop_struct;
 				}
 #if UEP_LEGACY_ENGINE_MINOR_VERSION > 18
 				else if ((PyTypeObject*)py_return_value == &ue_PyFQuatType)
 				{
-					FStructProperty* prop_struct = NewObject<FStructProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
+					FStructProperty* prop_struct = new FStructProperty(function, UTF8_TO_TCHAR(p_name));
 					prop_struct->Struct = TBaseStructure<FQuat>::Get();
 					prop = prop_struct;
 				}
@@ -3511,7 +3491,7 @@ UFunction* unreal_engine_add_function(UClass* u_class, char* name, PyObject* py_
 						UE_LOG(LogPython, Error, TEXT("type for %s must be a UClass"), UTF8_TO_TCHAR(name));
 						return nullptr;
 					}
-					FClassProperty* prop_class = NewObject<FClassProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
+					FClassProperty* prop_class = new FClassProperty(function, UTF8_TO_TCHAR(p_name));
 					prop_class->SetMetaClass((UClass*)py_obj->ue_object);
 					prop_class->PropertyClass = UClass::StaticClass();
 					prop = prop_class;
@@ -3523,15 +3503,15 @@ UFunction* unreal_engine_add_function(UClass* u_class, char* name, PyObject* py_
 				if (py_obj->ue_object->IsA<UClass>())
 				{
 					UClass* p_u_class = (UClass*)py_obj->ue_object;
-					FObjectProperty* prop_base = NewObject<FObjectProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
+					FObjectProperty* prop_base = new FObjectProperty(function, UTF8_TO_TCHAR(p_name));
 					prop_base->SetPropertyClass(p_u_class);
 					prop = prop_base;
 				}
 #if UEP_LEGACY_ENGINE_MINOR_VERSION > 17
 				else if (py_obj->ue_object->IsA<UEnum>())
 				{
-					FEnumProperty* prop_enum = NewObject<FEnumProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
-					FNumericProperty* prop_underlying = NewObject<FByteProperty>(prop_enum, TEXT("UnderlyingType"), RF_Public);
+					FEnumProperty* prop_enum = new FEnumProperty(function, UTF8_TO_TCHAR(p_name));
+					FNumericProperty* prop_underlying = new FByteProperty(prop_enum, TEXT("UnderlyingType"));
 					prop_enum->SetEnum((UEnum*)py_obj->ue_object);
 					prop_enum->AddCppProperty(prop_underlying);
 					prop = prop_enum;
@@ -3539,7 +3519,7 @@ UFunction* unreal_engine_add_function(UClass* u_class, char* name, PyObject* py_
 #endif
 				else if (py_obj->ue_object->IsA<UStruct>())
 				{
-					FStructProperty* prop_struct = NewObject<FStructProperty>(function, UTF8_TO_TCHAR(p_name), RF_Public);
+					FStructProperty* prop_struct = new FStructProperty(function, UTF8_TO_TCHAR(p_name));
 					prop_struct->Struct = (UScriptStruct*)py_obj->ue_object;
 					prop = prop_struct;
 				}
@@ -3548,16 +3528,21 @@ UFunction* unreal_engine_add_function(UClass* u_class, char* name, PyObject* py_
 			if (prop)
 			{
 				prop->SetPropertyFlags(CPF_Parm | CPF_OutParm | CPF_ReturnParm);
-				*next_property = prop;
-				next_property = &prop->Next;
-				*next_property_link = prop;
-				next_property_link = &prop->PropertyLinkNext;
+				function->AddCppProperty(prop);
 			}
 			else
 			{
 				UE_LOG(LogPython, Warning, TEXT("Unable to map return value to function %s"), UTF8_TO_TCHAR(name));
 			}
 		}
+	}
+
+	// AddCppProperty prepends to the linked list. Return parameters must be at
+	// the end and input parameters must retain inspect.signature() order, so the
+	// return property is added above and inputs are added here in reverse.
+	for (int32 argument_index = argument_properties.Num() - 1; argument_index >= 0; --argument_index)
+	{
+		function->AddCppProperty(argument_properties[argument_index]);
 	}
 
 	// link to fix props Offset_Internal
@@ -3579,7 +3564,7 @@ UFunction* unreal_engine_add_function(UClass* u_class, char* name, PyObject* py_
 					FClassProperty* ucp = CastField<FClassProperty>(p);
 					if (ucp)
 					{
-						UE_LOG(LogPython, Warning, TEXT("Parent FClassProperty = %p %s %p %s"), ucp->PropertyClass, *ucp->PropertyClass->GetName(), ucp->MetaClass, *ucp->MetaClass->GetName());
+						UE_LOG(LogPython, Warning, TEXT("Parent FClassProperty = %p %s %p %s"), ucp->PropertyClass.Get(), *ucp->PropertyClass->GetName(), ucp->MetaClass.Get(), *ucp->MetaClass->GetName());
 					}
 				}
 				++It;
@@ -3595,7 +3580,7 @@ UFunction* unreal_engine_add_function(UClass* u_class, char* name, PyObject* py_
 					FClassProperty* ucp = CastField<FClassProperty>(p);
 					if (ucp)
 					{
-						UE_LOG(LogPython, Warning, TEXT("Function FClassProperty = %p %s %p %s"), ucp->PropertyClass, *ucp->PropertyClass->GetName(), ucp->MetaClass, *ucp->MetaClass->GetName());
+						UE_LOG(LogPython, Warning, TEXT("Function FClassProperty = %p %s %p %s"), ucp->PropertyClass.Get(), *ucp->PropertyClass->GetName(), ucp->MetaClass.Get(), *ucp->MetaClass->GetName());
 					}
 				}
 				++It2;
@@ -3634,12 +3619,6 @@ UFunction* unreal_engine_add_function(UClass* u_class, char* name, PyObject* py_
 	}
 
 
-#if UEP_LEGACY_ENGINE_MINOR_VERSION >= 17
-	function->FunctionFlags = (EFunctionFlags)function_flags;
-#else
-	function->FunctionFlags = function_flags;
-#endif
-
 #if UEP_LEGACY_ENGINE_MINOR_VERSION > 18
 	function->SetNativeFunc((FNativeFuncPtr)& UPythonFunction::CallPythonCallable);
 #else
@@ -3655,32 +3634,6 @@ UFunction* unreal_engine_add_function(UClass* u_class, char* name, PyObject* py_
 	u_class->AddFunctionToFunctionMap(function);
 #else
 	u_class->AddFunctionToFunctionMap(function, function->GetFName());
-#endif
-
-	u_class->Bind();
-	u_class->StaticLink(true);
-
-	// regenerate CDO
-	u_class->GetDefaultObject()->RemoveFromRoot();
-	u_class->GetDefaultObject()->ConditionalBeginDestroy();
-	u_class->ClassDefaultObject = nullptr;
-
-#if WITH_EDITOR
-	u_class->PostEditChange();
-#endif
-
-	u_class->GetDefaultObject()->PostInitProperties();
-
-#if WITH_EDITOR
-	u_class->PostLinkerChange();
-#endif
-
-#if WITH_EDITOR
-	// this is required for avoiding startup crashes #405
-	if (GEditor)
-	{
-		FBlueprintActionDatabase::Get().RefreshClassActions(u_class);
-	}
 #endif
 
 	return function;

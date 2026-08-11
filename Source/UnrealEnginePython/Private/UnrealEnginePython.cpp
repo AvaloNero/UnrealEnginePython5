@@ -451,6 +451,10 @@ void FUnrealEnginePythonModule::InitializePython()
 		Config.install_signal_handlers = 0;
 		Config.safe_path = 0;
 		Config.user_site_directory = 0;
+		// The isolated embedded interpreter can run from read-only staged content.
+		// Do not create host-specific __pycache__ files beside project or engine
+		// scripts during cook, standalone startup, or packaged execution.
+		Config.write_bytecode = 0;
 
 		auto SetConfigString = [&Config](wchar_t** Field, const FString& Value, const TCHAR* FieldName) -> bool
 		{

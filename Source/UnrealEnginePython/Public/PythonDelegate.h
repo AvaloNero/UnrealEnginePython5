@@ -3,6 +3,8 @@
 #include "UnrealEnginePython.h"
 #include "PythonDelegate.generated.h"
 
+struct FInputActionValue;
+
 UCLASS()
 class UPythonDelegate : public UObject
 {
@@ -18,6 +20,7 @@ public:
 
 	void PyInputHandler();
 	void PyInputAxisHandler(float value);
+	void PyEnhancedInputActionHandler(const FInputActionValue& value);
 
 protected:
 	UFunction * signature;

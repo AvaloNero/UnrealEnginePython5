@@ -21,6 +21,13 @@ PyObject *py_ue_bind_axis(ue_PyUObject *, PyObject *);
 PyObject *py_ue_bind_key(ue_PyUObject *, PyObject *);
 PyObject *py_ue_bind_pressed_key(ue_PyUObject *, PyObject *);
 PyObject *py_ue_bind_released_key(ue_PyUObject *, PyObject *);
+PyObject *py_ue_bind_enhanced_action(ue_PyUObject *, PyObject *);
+PyObject *py_ue_remove_enhanced_action_binding(ue_PyUObject *, PyObject *);
+PyObject *py_ue_get_enhanced_action_binding_count(ue_PyUObject *, PyObject *);
+PyObject *py_ue_add_enhanced_input_mapping_context(ue_PyUObject *, PyObject *);
+PyObject *py_ue_remove_enhanced_input_mapping_context(ue_PyUObject *, PyObject *);
+PyObject *py_ue_has_enhanced_input_mapping_context(ue_PyUObject *, PyObject *);
+PyObject *py_ue_inject_enhanced_input_for_action(ue_PyUObject *, PyObject *);
 
 PyObject *py_ue_input_key(ue_PyUObject *, PyObject *);
 PyObject *py_ue_input_axis(ue_PyUObject *, PyObject *);

@@ -128,6 +128,26 @@ PyObject *py_ue_get_player_pawn(ue_PyUObject *self, PyObject * args)
 	Py_RETURN_UOBJECT(controller->GetPawn());
 }
 
+PyObject *py_ue_get_auth_game_mode(ue_PyUObject *self, PyObject * args)
+{
+	ue_py_check(self);
+
+	if (!PyArg_ParseTuple(args, ":get_auth_game_mode"))
+	{
+		return nullptr;
+	}
+
+	UWorld *world = ue_get_uworld(self);
+	if (!world)
+		return PyErr_Format(PyExc_Exception, "unable to retrieve UWorld from uobject");
+
+	AGameModeBase *game_mode = world->GetAuthGameMode();
+	if (!game_mode)
+		Py_RETURN_NONE;
+
+	Py_RETURN_UOBJECT(game_mode);
+}
+
 PyObject *py_ue_create_player(ue_PyUObject *self, PyObject * args)
 {
 

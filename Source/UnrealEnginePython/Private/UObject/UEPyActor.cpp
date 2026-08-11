@@ -428,7 +428,7 @@ PyObject *py_ue_setup_attachment(ue_PyUObject *self, PyObject * args)
 	PyObject *py_component;
 	char *socket_name = nullptr;
 
-	if (!PyArg_ParseTuple(args, "O|s:setup_attachment", &py_component))
+	if (!PyArg_ParseTuple(args, "O|s:setup_attachment", &py_component, &socket_name))
 		return nullptr;
 
 	USceneComponent *child = ue_py_check_type<USceneComponent>(self);

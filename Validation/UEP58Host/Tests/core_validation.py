@@ -210,6 +210,94 @@ def validate_function_calls():
     check(outputs == (True, 42, "Value=21"), outputs)
 
 
+def validate_dynamic_class_generation():
+    namespace = {}
+    exec(
+        """
+from unreal_engine.classes import (
+    FloatProperty,
+    IntProperty,
+    StrProperty,
+    UEPValidationObject,
+)
+
+
+class UEP58DynamicValidationObject(UEPValidationObject):
+    Speed = FloatProperty
+    Numbers = [IntProperty]
+    Labels = {StrProperty: IntProperty}
+    Peer = UEPValidationObject
+
+    def __init__(self):
+        self.Speed = 125.5
+        self.Numbers = [2, 3, 5, 7]
+        self.Labels = {"answer": 42}
+
+    def AddDynamicValues(self, left: int, right: int) -> int:
+        return left + right
+
+    def TripleOverrideableValue(self, Input: int) -> int:
+        return Input * 3
+
+    TripleOverrideableValue.override = "OverrideableValue"
+""",
+        namespace,
+    )
+
+    dynamic_type = namespace["UEP58DynamicValidationObject"]
+    check(dynamic_type.get_name() == "UEP58DynamicValidationObject", dynamic_type.get_name())
+    check(
+        ue.find_class("UEP58DynamicValidationObject") == dynamic_type,
+        "The generated class was not registered for reflected lookup",
+    )
+
+    cdo = dynamic_type.get_cdo()
+    instance = dynamic_type()
+    reflected_properties = set(instance.properties())
+    expected_properties = {"Speed", "Numbers", "Labels", "Peer"}
+    check(
+        expected_properties <= reflected_properties,
+        sorted(expected_properties - reflected_properties),
+    )
+
+    check(abs(cdo.Speed - 125.5) < 0.0001, cdo.Speed)
+    check(cdo.Numbers == [2, 3, 5, 7], cdo.Numbers)
+    check(cdo.Labels == {"answer": 42}, cdo.Labels)
+    check(abs(instance.Speed - 125.5) < 0.0001, instance.Speed)
+    check(instance.Numbers == [2, 3, 5, 7], instance.Numbers)
+    check(instance.Labels == {"answer": 42}, instance.Labels)
+
+    peer = context["fixture_type"]()
+    instance.Peer = peer
+    check(instance.Peer == peer, "Generated UObject property did not preserve identity")
+    check(
+        instance.call_function("AddDynamicValues", 19, 23) == 42,
+        "Generated UFunction returned the wrong value",
+    )
+    check(
+        instance.call_function("OverrideableValue", 14) == 42,
+        "Generated UFunction did not override the parent BlueprintNativeEvent",
+    )
+
+    context["dynamic_type"] = dynamic_type
+    context["dynamic_instance"] = instance
+
+
+def validate_enhanced_input_binding_lifecycle():
+    from unreal_engine.classes import EnhancedInputComponent, InputAction
+
+    component = EnhancedInputComponent()
+    action = InputAction()
+    received = []
+    handle = component.bind_enhanced_action(action, 1, received.append)
+
+    check(isinstance(handle, int) and handle > 0, handle)
+    check(component.get_enhanced_action_binding_count() == 1, "Binding was not registered")
+    check(component.remove_enhanced_action_binding(handle), "Binding handle was not removed")
+    check(component.get_enhanced_action_binding_count() == 0, "Binding remained after removal")
+    check(not component.remove_enhanced_action_binding(handle), "Removed handle succeeded twice")
+
+
 def validate_delegate_binding():
     fixture = context["fixture"]
     received = []
@@ -253,6 +341,8 @@ run_case("array_and_map_properties", validate_containers)
 run_case("struct_enum_and_struct_function", validate_struct_and_enum)
 run_case("object_property", validate_object_property)
 run_case("function_return_and_out_params", validate_function_calls)
+run_case("dynamic_uclass_fproperty_and_ufunction", validate_dynamic_class_generation)
+run_case("enhanced_input_binding_lifecycle", validate_enhanced_input_binding_lifecycle)
 run_case("dynamic_multicast_delegate", validate_delegate_binding)
 run_case("invalid_property_conversion", validate_negative_conversion)
 run_case("housekeeper_gc", validate_housekeeper_gc)
@@ -269,7 +359,6 @@ report = {
     "passed": len(results) - len(failed),
     "failed": len(failed),
     "known_skips": [
-        "dynamic Python-generated UClass/UFunction synthesis",
         "TSet property marshalling",
     ],
     "tests": results,

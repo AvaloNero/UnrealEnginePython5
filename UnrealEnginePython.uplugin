@@ -1,7 +1,7 @@
 {
 	"FileVersion": 3,
-	"Version": 100,
-	"VersionName": "0.1.0",
+	"Version": 200,
+	"VersionName": "0.2.0",
 	"FriendlyName": "UnrealEnginePython",
 	"Description": "Unreal Engine 5.8 and CPython 3.11 bindings and runtime integration",
 	"Category": "Scripting Languages",
@@ -37,6 +37,10 @@
     }
   ],
   "Plugins": [
+    {
+      "Name": "EnhancedInput",
+      "Enabled": true
+    },
     {
       "Name": "LevelSequenceEditor",
       "Enabled": true

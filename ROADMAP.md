@@ -22,7 +22,7 @@ the Third Person smoke test passes, and neither workflow changes engine source.
 
 ## 0.2.0 — Python-first Third Person
 
-Status: next.
+Status: complete.
 
 - Rebuild dynamic Python `UClass`/`UFunction` generation on UE5's `FField`
   reflection model where it is required for Python subclasses and event
@@ -43,9 +43,14 @@ Acceptance gate: the Python-first variant reaches feature parity with the basic
 Third Person template for keyboard/mouse play, its remaining Blueprint logic is
 inventoried, and all gameplay checks pass in visible and headless modes.
 
+Completed gate: UE 5.8.0 and Python 3.11.8 passed 46 shared, standalone,
+editor and packaged core checks. The Python-first demo passed Blueprint audit,
+headless smoke, packaged smoke and a rendered Standalone capture while the
+unchanged template overlay continued to pass its regression smoke test.
+
 ## 0.3.0 — API and platform hardening
 
-Status: planned after 0.2.0.
+Status: next.
 
 - Add generic `TSet` property marshalling and promote it into the required core
   suite.
@@ -56,10 +61,9 @@ Status: planned after 0.2.0.
   broader platform support.
 - Define reproducible source and optional binary release packaging.
 
-## 0.4.0+ — Lyra integration
+## 0.4.0 — Lyra integration
 
-Status: deferred until the Python-first Third Person milestone and hardening are
-complete.
+Status: planned after 0.3.0 hardening is complete.
 
 - Start with a capability audit of Lyra's Game Feature plugins, modular gameplay,
   Enhanced Input, Gameplay Ability System, asset management and multiplayer

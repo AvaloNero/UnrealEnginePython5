@@ -2,9 +2,17 @@
 
 #include "Kismet/GameplayStatics.h"
 #include "Components/InputComponent.h"
+#include "EnhancedInputComponent.h"
+#include "EnhancedInputSubsystems.h"
 #include "Engine/World.h"
+#include "Engine/LocalPlayer.h"
 #include "GameFramework/PlayerInput.h"
+#include "InputAction.h"
+#include "InputActionValue.h"
 #include "InputKeyEventArgs.h"
+#include "InputMappingContext.h"
+#include "InputTriggers.h"
+#include "Wrappers/UEPyFVector2D.h"
 
 
 PyObject *py_ue_is_input_key_down(ue_PyUObject *self, PyObject * args)
@@ -541,6 +549,255 @@ PyObject *py_ue_bind_released_key(ue_PyUObject *self, PyObject * args)
 		return NULL;
 	}
 	return py_ue_bind_key(self, Py_BuildValue("siO", key_name, EInputEvent::IE_Released, py_callable));
+}
+
+static UEnhancedInputComponent* ue_py_get_enhanced_input_component(ue_PyUObject* self)
+{
+	if (UEnhancedInputComponent* enhanced_input = Cast<UEnhancedInputComponent>(self->ue_object))
+	{
+		return enhanced_input;
+	}
+
+	AActor* actor = Cast<AActor>(self->ue_object);
+	if (!actor)
+	{
+		if (UActorComponent* component = Cast<UActorComponent>(self->ue_object))
+		{
+			actor = component->GetOwner();
+		}
+	}
+	return actor ? Cast<UEnhancedInputComponent>(actor->InputComponent) : nullptr;
+}
+
+static UEnhancedInputLocalPlayerSubsystem* ue_py_get_enhanced_input_subsystem(ue_PyUObject* self)
+{
+	APlayerController* controller = Cast<APlayerController>(self->ue_object);
+	ULocalPlayer* local_player = controller ? controller->GetLocalPlayer() : Cast<ULocalPlayer>(self->ue_object);
+	return local_player ? local_player->GetSubsystem<UEnhancedInputLocalPlayerSubsystem>() : nullptr;
+}
+
+static UInputAction* ue_py_get_input_action(PyObject* py_action)
+{
+	ue_PyUObject* py_uobject = ue_is_pyuobject(py_action);
+	return py_uobject ? Cast<UInputAction>(py_uobject->ue_object) : nullptr;
+}
+
+static UInputMappingContext* ue_py_get_input_mapping_context(PyObject* py_context)
+{
+	ue_PyUObject* py_uobject = ue_is_pyuobject(py_context);
+	return py_uobject ? Cast<UInputMappingContext>(py_uobject->ue_object) : nullptr;
+}
+
+static bool ue_py_build_input_action_value(
+	PyObject* py_value,
+	const UInputAction* action,
+	FInputActionValue& value)
+{
+	switch (action->ValueType)
+	{
+	case EInputActionValueType::Boolean:
+		value = FInputActionValue(PyObject_IsTrue(py_value) != 0);
+		return !PyErr_Occurred();
+	case EInputActionValueType::Axis1D:
+		if (!PyNumber_Check(py_value))
+		{
+			PyErr_SetString(PyExc_TypeError, "Axis1D input values must be numbers");
+			return false;
+		}
+		value = FInputActionValue(static_cast<float>(PyFloat_AsDouble(py_value)));
+		return !PyErr_Occurred();
+	case EInputActionValueType::Axis2D:
+		if (ue_PyFVector2D* vector = py_ue_is_fvector2d(py_value))
+		{
+			value = FInputActionValue(vector->vec);
+			return true;
+		}
+		PyErr_SetString(PyExc_TypeError, "Axis2D input values must be FVector2D objects");
+		return false;
+	case EInputActionValueType::Axis3D:
+		if (ue_PyFVector* vector = py_ue_is_fvector(py_value))
+		{
+			value = FInputActionValue(vector->vec);
+			return true;
+		}
+		PyErr_SetString(PyExc_TypeError, "Axis3D input values must be FVector objects");
+		return false;
+	default:
+		PyErr_SetString(PyExc_TypeError, "unsupported Enhanced Input action value type");
+		return false;
+	}
+}
+
+PyObject* py_ue_bind_enhanced_action(ue_PyUObject* self, PyObject* args)
+{
+	ue_py_check(self);
+	PyObject* py_action = nullptr;
+	int trigger_event = 0;
+	PyObject* py_callable = nullptr;
+	if (!PyArg_ParseTuple(args, "OiO:bind_enhanced_action", &py_action, &trigger_event, &py_callable))
+	{
+		return nullptr;
+	}
+	if (!PyCallable_Check(py_callable))
+	{
+		return PyErr_Format(PyExc_TypeError, "callback is not callable");
+	}
+
+	UInputAction* action = ue_py_get_input_action(py_action);
+	if (!action)
+	{
+		return PyErr_Format(PyExc_TypeError, "action is not a UInputAction");
+	}
+	const ETriggerEvent event = static_cast<ETriggerEvent>(trigger_event);
+	if (event != ETriggerEvent::Triggered && event != ETriggerEvent::Started &&
+		event != ETriggerEvent::Ongoing && event != ETriggerEvent::Canceled &&
+		event != ETriggerEvent::Completed)
+	{
+		return PyErr_Format(PyExc_ValueError, "trigger_event must be one ETriggerEvent value");
+	}
+
+	UEnhancedInputComponent* input = ue_py_get_enhanced_input_component(self);
+	if (!input)
+	{
+		return PyErr_Format(PyExc_RuntimeError, "no UEnhancedInputComponent is available for this object");
+	}
+
+	UPythonDelegate* delegate = FUnrealEnginePythonHouseKeeper::Get()->NewDelegate(input, py_callable, nullptr);
+	FEnhancedInputActionEventBinding& binding = input->BindAction(
+		action,
+		event,
+		delegate,
+		&UPythonDelegate::PyEnhancedInputActionHandler);
+	return PyLong_FromUnsignedLong(binding.GetHandle());
+}
+
+PyObject* py_ue_remove_enhanced_action_binding(ue_PyUObject* self, PyObject* args)
+{
+	ue_py_check(self);
+	unsigned long handle = 0;
+	if (!PyArg_ParseTuple(args, "k:remove_enhanced_action_binding", &handle))
+	{
+		return nullptr;
+	}
+	if (handle > MAX_uint32)
+	{
+		return PyErr_Format(PyExc_OverflowError, "binding handle is outside the uint32 range");
+	}
+	UEnhancedInputComponent* input = ue_py_get_enhanced_input_component(self);
+	if (!input)
+	{
+		return PyErr_Format(PyExc_RuntimeError, "no UEnhancedInputComponent is available for this object");
+	}
+	return PyBool_FromLong(input->RemoveBindingByHandle(static_cast<uint32>(handle)) ? 1 : 0);
+}
+
+PyObject* py_ue_get_enhanced_action_binding_count(ue_PyUObject* self, PyObject* args)
+{
+	ue_py_check(self);
+	if (!PyArg_ParseTuple(args, ":get_enhanced_action_binding_count"))
+	{
+		return nullptr;
+	}
+	UEnhancedInputComponent* input = ue_py_get_enhanced_input_component(self);
+	if (!input)
+	{
+		return PyErr_Format(PyExc_RuntimeError, "no UEnhancedInputComponent is available for this object");
+	}
+	return PyLong_FromLong(input->GetActionEventBindings().Num());
+}
+
+PyObject* py_ue_add_enhanced_input_mapping_context(ue_PyUObject* self, PyObject* args)
+{
+	ue_py_check(self);
+	PyObject* py_context = nullptr;
+	int priority = 0;
+	if (!PyArg_ParseTuple(args, "O|i:add_enhanced_input_mapping_context", &py_context, &priority))
+	{
+		return nullptr;
+	}
+	UInputMappingContext* context = ue_py_get_input_mapping_context(py_context);
+	if (!context)
+	{
+		return PyErr_Format(PyExc_TypeError, "context is not a UInputMappingContext");
+	}
+	UEnhancedInputLocalPlayerSubsystem* subsystem = ue_py_get_enhanced_input_subsystem(self);
+	if (!subsystem)
+	{
+		return PyErr_Format(PyExc_RuntimeError, "no local Enhanced Input subsystem is available");
+	}
+	subsystem->AddMappingContext(context, priority);
+	Py_RETURN_NONE;
+}
+
+PyObject* py_ue_remove_enhanced_input_mapping_context(ue_PyUObject* self, PyObject* args)
+{
+	ue_py_check(self);
+	PyObject* py_context = nullptr;
+	if (!PyArg_ParseTuple(args, "O:remove_enhanced_input_mapping_context", &py_context))
+	{
+		return nullptr;
+	}
+	UInputMappingContext* context = ue_py_get_input_mapping_context(py_context);
+	if (!context)
+	{
+		return PyErr_Format(PyExc_TypeError, "context is not a UInputMappingContext");
+	}
+	UEnhancedInputLocalPlayerSubsystem* subsystem = ue_py_get_enhanced_input_subsystem(self);
+	if (!subsystem)
+	{
+		return PyErr_Format(PyExc_RuntimeError, "no local Enhanced Input subsystem is available");
+	}
+	subsystem->RemoveMappingContext(context);
+	Py_RETURN_NONE;
+}
+
+PyObject* py_ue_has_enhanced_input_mapping_context(ue_PyUObject* self, PyObject* args)
+{
+	ue_py_check(self);
+	PyObject* py_context = nullptr;
+	if (!PyArg_ParseTuple(args, "O:has_enhanced_input_mapping_context", &py_context))
+	{
+		return nullptr;
+	}
+	UInputMappingContext* context = ue_py_get_input_mapping_context(py_context);
+	if (!context)
+	{
+		return PyErr_Format(PyExc_TypeError, "context is not a UInputMappingContext");
+	}
+	UEnhancedInputLocalPlayerSubsystem* subsystem = ue_py_get_enhanced_input_subsystem(self);
+	if (!subsystem)
+	{
+		return PyErr_Format(PyExc_RuntimeError, "no local Enhanced Input subsystem is available");
+	}
+	return PyBool_FromLong(subsystem->HasMappingContext(context) ? 1 : 0);
+}
+
+PyObject* py_ue_inject_enhanced_input_for_action(ue_PyUObject* self, PyObject* args)
+{
+	ue_py_check(self);
+	PyObject* py_action = nullptr;
+	PyObject* py_value = nullptr;
+	if (!PyArg_ParseTuple(args, "OO:inject_enhanced_input_for_action", &py_action, &py_value))
+	{
+		return nullptr;
+	}
+	UInputAction* action = ue_py_get_input_action(py_action);
+	if (!action)
+	{
+		return PyErr_Format(PyExc_TypeError, "action is not a UInputAction");
+	}
+	FInputActionValue value;
+	if (!ue_py_build_input_action_value(py_value, action, value))
+	{
+		return nullptr;
+	}
+	UEnhancedInputLocalPlayerSubsystem* subsystem = ue_py_get_enhanced_input_subsystem(self);
+	if (!subsystem)
+	{
+		return PyErr_Format(PyExc_RuntimeError, "no local Enhanced Input subsystem is available");
+	}
+	subsystem->InjectInputForAction(action, value, {}, {});
+	Py_RETURN_NONE;
 }
 
 

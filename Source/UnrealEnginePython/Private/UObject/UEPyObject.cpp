@@ -1615,352 +1615,246 @@ PyObject *py_ue_add_function(ue_PyUObject * self, PyObject * args)
 #endif
 
 #if UEP_WITH_DYNAMIC_CLASS_GENERATION
+static bool ue_py_resolve_dynamic_property_type(
+	PyObject* py_type,
+	UClass*& object_class,
+	UScriptStruct*& script_struct,
+	UEnum*& enum_type)
+{
+	object_class = nullptr;
+	script_struct = nullptr;
+	enum_type = nullptr;
+
+	if (!py_type || py_type == Py_None)
+	{
+		return true;
+	}
+
+	ue_PyUObject* py_uobject = ue_is_pyuobject(py_type);
+	if (!py_uobject)
+	{
+		PyErr_SetString(PyExc_TypeError, "property type metadata is not a UObject");
+		return false;
+	}
+
+	object_class = Cast<UClass>(py_uobject->ue_object);
+	if (!object_class)
+	{
+		script_struct = Cast<UScriptStruct>(py_uobject->ue_object);
+	}
+	if (!object_class && !script_struct)
+	{
+		enum_type = Cast<UEnum>(py_uobject->ue_object);
+	}
+	if (!object_class && !script_struct && !enum_type)
+	{
+		PyErr_SetString(PyExc_TypeError, "property type metadata must be a UClass, UScriptStruct, or UEnum");
+		return false;
+	}
+
+	return true;
+}
+
+static FProperty* ue_py_construct_dynamic_property(
+	FFieldClass* field_class,
+	const FFieldVariant& owner,
+	const FName& name)
+{
+	if (!field_class || !field_class->IsChildOf(FProperty::StaticClass()))
+	{
+		return nullptr;
+	}
+	return CastField<FProperty>(field_class->Construct(owner, name));
+}
+
+static void ue_py_configure_dynamic_property(
+	FProperty* property,
+	UClass* object_class,
+	UScriptStruct* script_struct,
+	UEnum* enum_type)
+{
+	if (FClassProperty* class_property = CastField<FClassProperty>(property))
+	{
+		class_property->PropertyClass = UClass::StaticClass();
+		class_property->SetMetaClass(object_class ? object_class : UObject::StaticClass());
+	}
+	else if (FObjectPropertyBase* object_property = CastField<FObjectPropertyBase>(property))
+	{
+		object_property->SetPropertyClass(object_class ? object_class : UObject::StaticClass());
+	}
+	else if (FStructProperty* struct_property = CastField<FStructProperty>(property))
+	{
+		struct_property->Struct = script_struct;
+	}
+	else if (FEnumProperty* enum_property = CastField<FEnumProperty>(property))
+	{
+		enum_property->SetEnum(enum_type);
+		enum_property->AddCppProperty(new FByteProperty(enum_property, TEXT("UnderlyingType")));
+	}
+	else if (FByteProperty* byte_property = CastField<FByteProperty>(property))
+	{
+		byte_property->Enum = enum_type;
+	}
+}
+
 PyObject *py_ue_add_property(ue_PyUObject * self, PyObject * args)
 {
-
 	ue_py_check(self);
 
-	PyObject *obj;
-	char *name;
-	PyObject *property_class = nullptr;
-	PyObject *property_class2 = nullptr;
+	PyObject* obj = nullptr;
+	char* name = nullptr;
+	PyObject* property_class = nullptr;
+	PyObject* property_class2 = nullptr;
 	if (!PyArg_ParseTuple(args, "Os|OO:add_property", &obj, &name, &property_class, &property_class2))
 	{
-		return NULL;
+		return nullptr;
 	}
 
-	if (!self->ue_object->IsA<UStruct>())
+	UStruct* owner_struct = Cast<UStruct>(self->ue_object);
+	if (!owner_struct)
+	{
 		return PyErr_Format(PyExc_Exception, "uobject is not a UStruct");
+	}
 
-	UObject *scope = nullptr;
-
-	FProperty *u_property = nullptr;
-	UClass *u_class = nullptr;
-	FProperty *u_property2 = nullptr;
-	UClass *u_class2 = nullptr;
-
-	UClass *u_prop_class = nullptr;
-	UScriptStruct *u_script_struct = nullptr;
-	UClass *u_prop_class2 = nullptr;
-	UScriptStruct *u_script_struct2 = nullptr;
-	bool is_array = false;
-	bool is_map = false;
-
-	if (property_class)
+	if (UClass* owner_class = Cast<UClass>(owner_struct))
 	{
-		if (!ue_is_pyuobject(property_class))
+		if (owner_class->GetDefaultObject(false))
 		{
-			return PyErr_Format(PyExc_Exception, "property class arg is not a uobject");
+			return PyErr_Format(
+				PyExc_RuntimeError,
+				"properties can only be added while a dynamic class is being constructed");
 		}
-		ue_PyUObject *py_prop_class = (ue_PyUObject *)property_class;
-		if (py_prop_class->ue_object->IsA<UClass>())
+	}
+
+	UClass* object_class = nullptr;
+	UScriptStruct* script_struct = nullptr;
+	UEnum* enum_type = nullptr;
+	UClass* object_class2 = nullptr;
+	UScriptStruct* script_struct2 = nullptr;
+	UEnum* enum_type2 = nullptr;
+	if (!ue_py_resolve_dynamic_property_type(property_class, object_class, script_struct, enum_type) ||
+		!ue_py_resolve_dynamic_property_type(property_class2, object_class2, script_struct2, enum_type2))
+	{
+		return nullptr;
+	}
+
+	FProperty* property = nullptr;
+	FProperty* inner_property = nullptr;
+	FProperty* second_inner_property = nullptr;
+	FFieldClass* field_class = nullptr;
+	FFieldClass* second_field_class = nullptr;
+
+	if (PyList_Check(obj))
+	{
+		const Py_ssize_t item_count = PyList_Size(obj);
+		if (item_count != 1 && item_count != 2)
 		{
-			u_prop_class = (UClass *)py_prop_class->ue_object;
+			return PyErr_Format(PyExc_TypeError, "property lists must contain one array type or two map types");
 		}
-		else if (py_prop_class->ue_object->IsA<UScriptStruct>())
+
+		field_class = ue_py_get_ffield_class_from_capsule(PyList_GetItem(obj, 0));
+		if (!field_class)
 		{
-			u_script_struct = (UScriptStruct *)py_prop_class->ue_object;
+			return PyErr_Format(PyExc_TypeError, "container element is not an FProperty class");
+		}
+
+		if (item_count == 1)
+		{
+			FArrayProperty* array_property = new FArrayProperty(owner_struct, FName(UTF8_TO_TCHAR(name)));
+			inner_property = ue_py_construct_dynamic_property(field_class, array_property, TEXT("Inner"));
+			if (!inner_property)
+			{
+				delete array_property;
+				return PyErr_Format(PyExc_RuntimeError, "unable to construct array inner property");
+			}
+			array_property->Inner = inner_property;
+			property = array_property;
 		}
 		else
 		{
-			return PyErr_Format(PyExc_Exception, "property class arg is not a UClass or a UScriptStruct");
-		}
-	}
-
-	if (property_class2)
-	{
-		if (!ue_is_pyuobject(property_class2))
-		{
-			return PyErr_Format(PyExc_Exception, "property class arg is not a uobject");
-		}
-		ue_PyUObject *py_prop_class = (ue_PyUObject *)property_class2;
-		if (py_prop_class->ue_object->IsA<UClass>())
-		{
-			u_prop_class2 = (UClass *)py_prop_class->ue_object;
-		}
-		else if (py_prop_class->ue_object->IsA<UScriptStruct>())
-		{
-			u_script_struct2 = (UScriptStruct *)py_prop_class->ue_object;
-		}
-		else
-		{
-			return PyErr_Format(PyExc_Exception, "property class arg is not a UClass or a UScriptStruct");
-		}
-	}
-
-	EObjectFlags o_flags = RF_Public | RF_MarkAsNative;// | RF_Transient;
-
-	if (ue_is_pyuobject(obj))
-	{
-		ue_PyUObject *py_obj = (ue_PyUObject *)obj;
-		if (!py_obj->ue_object->IsA<UClass>())
-		{
-			return PyErr_Format(PyExc_Exception, "uobject is not a UClass");
-		}
-		u_class = (UClass *)py_obj->ue_object;
-		if (!u_class->IsChildOf<FProperty>())
-			return PyErr_Format(PyExc_Exception, "uobject is not a FProperty");
-		if (u_class == FArrayProperty::StaticClass())
-			return PyErr_Format(PyExc_Exception, "please use a single-item list of property for arrays");
-		scope = self->ue_object;
-	}
-	else if (PyList_Check(obj))
-	{
-		if (PyList_Size(obj) == 1)
-		{
-			PyObject *py_item = PyList_GetItem(obj, 0);
-			if (ue_is_pyuobject(py_item))
+			second_field_class = ue_py_get_ffield_class_from_capsule(PyList_GetItem(obj, 1));
+			if (!second_field_class)
 			{
-				ue_PyUObject *py_obj = (ue_PyUObject *)py_item;
-				if (!py_obj->ue_object->IsA<UClass>())
-				{
-					return PyErr_Format(PyExc_Exception, "uobject is not a UClass");
-				}
-				u_class = (UClass *)py_obj->ue_object;
-				if (!u_class->IsChildOf<FProperty>())
-					return PyErr_Format(PyExc_Exception, "uobject is not a FProperty");
-				if (u_class == FArrayProperty::StaticClass())
-					return PyErr_Format(PyExc_Exception, "please use a single-item list of property for arrays");
-				FArrayProperty *u_array = NewObject<FArrayProperty>(self->ue_object, UTF8_TO_TCHAR(name), o_flags);
-				if (!u_array)
-					return PyErr_Format(PyExc_Exception, "unable to allocate new FProperty");
-				scope = u_array;
-				is_array = true;
+				return PyErr_Format(PyExc_TypeError, "map value is not an FProperty class");
 			}
-			Py_DECREF(py_item);
-		}
-#if UEP_LEGACY_ENGINE_MINOR_VERSION >= 15
-		else if (PyList_Size(obj) == 2)
-		{
-			PyObject *py_key = PyList_GetItem(obj, 0);
-			PyObject *py_value = PyList_GetItem(obj, 1);
-			if (ue_is_pyuobject(py_key) && ue_is_pyuobject(py_value))
+
+			FMapProperty* map_property = new FMapProperty(owner_struct, FName(UTF8_TO_TCHAR(name)));
+			inner_property = ue_py_construct_dynamic_property(field_class, map_property, TEXT("Key"));
+			second_inner_property = ue_py_construct_dynamic_property(second_field_class, map_property, TEXT("Value"));
+			if (!inner_property || !second_inner_property)
 			{
-				// KEY
-				ue_PyUObject *py_obj = (ue_PyUObject *)py_key;
-				if (!py_obj->ue_object->IsA<UClass>())
-				{
-					return PyErr_Format(PyExc_Exception, "uobject is not a UClass");
-				}
-				u_class = (UClass *)py_obj->ue_object;
-				if (!u_class->IsChildOf<FProperty>())
-					return PyErr_Format(PyExc_Exception, "uobject is not a FProperty");
-				if (u_class == FArrayProperty::StaticClass())
-					return PyErr_Format(PyExc_Exception, "please use a two-items list of properties for maps");
-
-				// VALUE
-				ue_PyUObject *py_obj2 = (ue_PyUObject *)py_value;
-				if (!py_obj2->ue_object->IsA<UClass>())
-				{
-					return PyErr_Format(PyExc_Exception, "uobject is not a UClass");
-				}
-				u_class2 = (UClass *)py_obj2->ue_object;
-				if (!u_class2->IsChildOf<FProperty>())
-					return PyErr_Format(PyExc_Exception, "uobject is not a FProperty");
-				if (u_class2 == FArrayProperty::StaticClass())
-					return PyErr_Format(PyExc_Exception, "please use a two-items list of properties for maps");
-
-
-				FMapProperty *u_map = NewObject<FMapProperty>(self->ue_object, UTF8_TO_TCHAR(name), o_flags);
-				if (!u_map)
-					return PyErr_Format(PyExc_Exception, "unable to allocate new FProperty");
-				scope = u_map;
-				is_map = true;
+				delete map_property;
+				return PyErr_Format(PyExc_RuntimeError, "unable to construct map key/value properties");
 			}
-			Py_DECREF(py_key);
-			Py_DECREF(py_value);
+			map_property->KeyProp = inner_property;
+			map_property->ValueProp = second_inner_property;
+			property = map_property;
 		}
-#endif
+	}
+	else
+	{
+		field_class = ue_py_get_ffield_class_from_capsule(obj);
+		if (!field_class)
+		{
+			return PyErr_Format(PyExc_TypeError, "argument is not an FProperty class");
+		}
+		if (field_class == FArrayProperty::StaticClass() || field_class == FMapProperty::StaticClass())
+		{
+			return PyErr_Format(PyExc_TypeError, "use a list to declare array or map properties");
+		}
+		property = ue_py_construct_dynamic_property(field_class, owner_struct, FName(UTF8_TO_TCHAR(name)));
 	}
 
-
-	if (!scope)
+	if (!property)
 	{
-		return PyErr_Format(PyExc_Exception, "argument is not a UObject or a single item list");
+		return PyErr_Format(PyExc_RuntimeError, "unable to construct FProperty");
 	}
 
-	u_property = NewObject<FProperty>(scope, u_class, UTF8_TO_TCHAR(name), o_flags);
-	if (!u_property)
+	if (inner_property)
 	{
-		if (is_array || is_map)
-			scope->MarkPendingKill();
-		return PyErr_Format(PyExc_Exception, "unable to allocate new FProperty");
+		inner_property->SetPropertyFlags(CPF_ZeroConstructor | CPF_HasGetValueTypeHash);
+		ue_py_configure_dynamic_property(inner_property, object_class, script_struct, enum_type);
+	}
+	if (second_inner_property)
+	{
+		second_inner_property->SetPropertyFlags(CPF_ZeroConstructor | CPF_HasGetValueTypeHash);
+		ue_py_configure_dynamic_property(second_inner_property, object_class2, script_struct2, enum_type2);
+	}
+	if (!inner_property)
+	{
+		ue_py_configure_dynamic_property(property, object_class, script_struct, enum_type);
 	}
 
-	// one day we may want to support transient properties...
-	//uint64 flags = CPF_Edit | CPF_BlueprintVisible | CPF_Transient | CPF_ZeroConstructor;
-	uint64 flags = CPF_Edit | CPF_BlueprintVisible | CPF_ZeroConstructor;
-
-	// we assumed Actor Components to be non-editable
-	if (u_prop_class && u_prop_class->IsChildOf<UActorComponent>())
+	EPropertyFlags flags = CPF_Edit | CPF_BlueprintVisible | CPF_ZeroConstructor;
+	if (object_class && object_class->IsChildOf<UActorComponent>())
 	{
-		flags |= ~CPF_Edit;
+		flags &= ~CPF_Edit;
 	}
-
-	// TODO manage replication
-	/*
-	if (replicate && PyObject_IsTrue(replicate)) {
-		flags |= CPF_Net;
-	}*/
-
-	if (is_array)
+	if (FMulticastDelegateProperty* multicast_property = CastField<FMulticastDelegateProperty>(property))
 	{
-		FArrayProperty *u_array = (FArrayProperty *)scope;
-		u_array->AddCppProperty(u_property);
-#if UEP_LEGACY_ENGINE_MINOR_VERSION < 20
-		u_property->SetPropertyFlags(flags);
-#else
-		u_property->SetPropertyFlags((EPropertyFlags)flags);
-#endif
-		if (u_property->GetClass() == FObjectProperty::StaticClass())
-		{
-			FObjectProperty *obj_prop = (FObjectProperty *)u_property;
-			if (u_prop_class)
-			{
-				obj_prop->SetPropertyClass(u_prop_class);
-			}
-		}
-		if (u_property->GetClass() == FStructProperty::StaticClass())
-		{
-			FStructProperty *obj_prop = (FStructProperty *)u_property;
-			if (u_script_struct)
-			{
-				obj_prop->Struct = u_script_struct;
-			}
-		}
-		u_property = u_array;
-	}
-
-#if UEP_LEGACY_ENGINE_MINOR_VERSION >= 15
-	if (is_map)
-	{
-		u_property2 = NewObject<FProperty>(scope, u_class2, NAME_None, o_flags);
-		if (!u_property2)
-		{
-			if (is_array || is_map)
-				scope->MarkPendingKill();
-			return PyErr_Format(PyExc_Exception, "unable to allocate new FProperty");
-		}
-		FMapProperty *u_map = (FMapProperty *)scope;
-
-#if UEP_LEGACY_ENGINE_MINOR_VERSION < 20
-		u_property->SetPropertyFlags(flags);
-		u_property2->SetPropertyFlags(flags);
-#else
-		u_property->SetPropertyFlags((EPropertyFlags)flags);
-		u_property2->SetPropertyFlags((EPropertyFlags)flags);
-#endif
-
-		if (u_property->GetClass() == FObjectProperty::StaticClass())
-		{
-			FObjectProperty *obj_prop = (FObjectProperty *)u_property;
-			if (u_prop_class)
-			{
-				obj_prop->SetPropertyClass(u_prop_class);
-			}
-		}
-		if (u_property->GetClass() == FStructProperty::StaticClass())
-		{
-			FStructProperty *obj_prop = (FStructProperty *)u_property;
-			if (u_script_struct)
-			{
-				obj_prop->Struct = u_script_struct;
-			}
-		}
-
-		if (u_property2->GetClass() == FObjectProperty::StaticClass())
-		{
-			FObjectProperty *obj_prop = (FObjectProperty *)u_property2;
-			if (u_prop_class2)
-			{
-				obj_prop->SetPropertyClass(u_prop_class2);
-			}
-		}
-		if (u_property2->GetClass() == FStructProperty::StaticClass())
-		{
-			FStructProperty *obj_prop = (FStructProperty *)u_property2;
-			if (u_script_struct2)
-			{
-				obj_prop->Struct = u_script_struct2;
-			}
-		}
-
-		u_map->KeyProp = u_property;
-		u_map->ValueProp = u_property2;
-
-		u_property = u_map;
-	}
-#endif
-
-	if (u_class == FMulticastDelegateProperty::StaticClass())
-	{
-		FMulticastDelegateProperty *mcp = (FMulticastDelegateProperty *)u_property;
-		mcp->SignatureFunction = NewObject<UFunction>(self->ue_object, NAME_None, RF_Public | RF_Transient | RF_MarkAsNative);
-		mcp->SignatureFunction->FunctionFlags = FUNC_MulticastDelegate | FUNC_BlueprintCallable | FUNC_Native;
+		multicast_property->SignatureFunction = NewObject<UFunction>(
+			owner_struct,
+			FName(*FString::Printf(TEXT("%s__DelegateSignature"), UTF8_TO_TCHAR(name))),
+			RF_Public | RF_Transient);
+		multicast_property->SignatureFunction->FunctionFlags = FUNC_MulticastDelegate | FUNC_BlueprintCallable | FUNC_Native;
 		flags |= CPF_BlueprintAssignable | CPF_BlueprintCallable;
 		flags &= ~CPF_Edit;
 	}
-
-	else if (u_class == FDelegateProperty::StaticClass())
+	else if (FDelegateProperty* delegate_property = CastField<FDelegateProperty>(property))
 	{
-		FDelegateProperty *udp = (FDelegateProperty *)u_property;
-		udp->SignatureFunction = NewObject<UFunction>(self->ue_object, NAME_None, RF_Public | RF_Transient | RF_MarkAsNative);
-		udp->SignatureFunction->FunctionFlags = FUNC_MulticastDelegate | FUNC_BlueprintCallable | FUNC_Native;
-		flags |= CPF_BlueprintAssignable | CPF_BlueprintCallable;
-		flags &= ~CPF_Edit;
+		delegate_property->SignatureFunction = NewObject<UFunction>(
+			owner_struct,
+			FName(*FString::Printf(TEXT("%s__DelegateSignature"), UTF8_TO_TCHAR(name))),
+			RF_Public | RF_Transient);
+		delegate_property->SignatureFunction->FunctionFlags = FUNC_Delegate | FUNC_BlueprintCallable | FUNC_Native;
 	}
 
-	else if (u_class == FObjectProperty::StaticClass())
-	{
-		// ensure it is not an arry as we have already managed it !
-		if (!is_array && !is_map)
-		{
-			FObjectProperty *obj_prop = (FObjectProperty *)u_property;
-			if (u_prop_class)
-			{
-				obj_prop->SetPropertyClass(u_prop_class);
-			}
-		}
-	}
+	property->SetPropertyFlags(flags);
+	property->ArrayDim = 1;
+	owner_struct->AddCppProperty(property);
 
-	else if (u_class == FStructProperty::StaticClass())
-	{
-		// ensure it is not an arry as we have already managed it !
-		if (!is_array && !is_map)
-		{
-			FStructProperty *obj_prop = (FStructProperty *)u_property;
-			if (u_script_struct)
-			{
-				obj_prop->Struct = u_script_struct;
-			}
-		}
-	}
-
-#if UEP_LEGACY_ENGINE_MINOR_VERSION < 20
-	u_property->SetPropertyFlags(flags);
-#else
-	u_property->SetPropertyFlags((EPropertyFlags)flags);
-#endif
-	u_property->ArrayDim = 1;
-
-	UStruct *u_struct = (UStruct *)self->ue_object;
-	u_struct->AddCppProperty(u_property);
-	u_struct->StaticLink(true);
-
-
-	if (u_struct->IsA<UClass>())
-	{
-		UClass *owner_class = (UClass *)u_struct;
-		owner_class->GetDefaultObject()->RemoveFromRoot();
-		owner_class->GetDefaultObject()->ConditionalBeginDestroy();
-		owner_class->ClassDefaultObject = nullptr;
-		owner_class->GetDefaultObject()->PostInitProperties();
-	}
-
-	// TODO add default value
-
-	return ue_py_new_fproperty_capsule(u_property);
-	}
+	return ue_py_new_fproperty_capsule(property);
+}
 #else
 PyObject* py_ue_add_property(ue_PyUObject* self, PyObject* args)
 {

@@ -1,7 +1,9 @@
 
 #include "PythonDelegate.h"
+#include "InputActionValue.h"
 #include "UEPyModule.h"
 #include "UEPyCallable.h"
+#include "Wrappers/UEPyFVector2D.h"
 
 UPythonDelegate::UPythonDelegate()
 {
@@ -94,6 +96,45 @@ void UPythonDelegate::PyInputAxisHandler(float value)
 {
 	FScopePythonGIL gil;
 	PyObject *ret = PyObject_CallFunction(py_callable, (char *)"f", value);
+	if (!ret)
+	{
+		unreal_engine_py_log_error();
+		return;
+	}
+	Py_DECREF(ret);
+}
+
+void UPythonDelegate::PyEnhancedInputActionHandler(const FInputActionValue& value)
+{
+	if (!py_callable)
+	{
+		return;
+	}
+
+	FScopePythonGIL gil;
+	PyObject* py_value = nullptr;
+	switch (value.GetValueType())
+	{
+	case EInputActionValueType::Boolean:
+		py_value = PyBool_FromLong(value.Get<bool>() ? 1 : 0);
+		break;
+	case EInputActionValueType::Axis1D:
+		py_value = PyFloat_FromDouble(value.Get<float>());
+		break;
+	case EInputActionValueType::Axis2D:
+		py_value = py_ue_new_fvector2d(value.Get<FVector2D>());
+		break;
+	case EInputActionValueType::Axis3D:
+		py_value = py_ue_new_fvector(value.Get<FVector>());
+		break;
+	default:
+		PyErr_SetString(PyExc_RuntimeError, "unsupported Enhanced Input action value type");
+		unreal_engine_py_log_error();
+		return;
+	}
+
+	PyObject* ret = PyObject_CallFunctionObjArgs(py_callable, py_value, nullptr);
+	Py_DECREF(py_value);
 	if (!ret)
 	{
 		unreal_engine_py_log_error();

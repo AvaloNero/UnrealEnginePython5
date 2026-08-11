@@ -10,6 +10,18 @@ static PyObject *ue_PyUClassesImporter_getattro(ue_PyUClassesImporter *self, PyO
 			const char *attr = UEPyUnicode_AsUTF8(attr_name);
 			if (attr[0] != '_')
 			{
+				FFieldClass* field_class = FFieldClass::GetNameToFieldClassMap().FindRef(FName(UTF8_TO_TCHAR(attr)));
+				if (field_class && field_class->IsChildOf(FProperty::StaticClass()))
+				{
+					// UE5 properties are FFields rather than UObjects. Preserve the
+					// historical unreal_engine.classes.FloatProperty-style API with
+					// a non-owning capsule around the process-lifetime field class.
+					// Check this map before UObject lookup because UE's Python plugin
+					// may expose wrapper UClasses with the same short names.
+					PyErr_Clear();
+					return ue_py_new_ffield_class_capsule(field_class);
+				}
+
 				UClass *u_class = ue_py_find_first_object<UClass>(UTF8_TO_TCHAR(attr));
 				if (u_class)
 				{

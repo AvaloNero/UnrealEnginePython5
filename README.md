@@ -3,14 +3,15 @@
 
 ## Unreal Engine 5.8 port
 
-**Current version: 0.1.0**
+**Current version: 0.2.0**
 
-Version 0.1.0 establishes the first tested UE5 baseline for this fork. It
-targets **Unreal Engine 5.8**, uses the engine-bundled **CPython 3.11** through
-UnrealBuildTool's `Python3` module, and does not require changes to Unreal Engine
-source code. Windows/Win64 is the currently validated platform.
+Version 0.2.0 extends the first tested UE5 baseline with runtime Python subclass
+generation and a Python-first Third Person sample. It targets **Unreal Engine
+5.8**, uses the engine-bundled **CPython 3.11** through UnrealBuildTool's
+`Python3` module, and does not require changes to Unreal Engine source code.
+Windows/Win64 is the currently validated platform.
 
-### 0.1.0 support contract
+### 0.2.0 support contract
 
 The release baseline includes:
 
@@ -19,30 +20,38 @@ The release baseline includes:
   `PythonConsole`, and `PythonEditor`);
 * core `unreal_engine` reflection, property, function, delegate, object lifetime,
   Actor, asset and Slate coverage on Python 3.11;
+* dynamic Python `UClass`, `FProperty` and `UFunction` generation on UE5's
+  `FField` model, including reflected parent-event overrides;
+* Enhanced Input mapping, action binding/removal and deterministic input
+  injection adapters;
 * sharing the process interpreter when Epic's `PythonScriptPlugin` owns it, or
   initializing the engine interpreter when that plugin is disabled;
 * a packaged Win64 runtime test with UEP-owned Python; and
-* a visible Third Person sample whose additional gameplay is driven by Python.
+* a visible and packaged Third Person sample whose character, controller,
+  GameMode, camera, keyboard/mouse input and locomotion state are driven by
+  Python.
 
 The repeatable acceptance project and one-command build/test/package workflow
 are documented in [`Validation/README.md`](Validation/README.md). The sample is
 documented in [`Demos/README.md`](Demos/README.md). See
+[`docs/Subclassing_API.md`](docs/Subclassing_API.md) and
+[`docs/EnhancedInput_API.md`](docs/EnhancedInput_API.md) for the UE 5.8 gameplay
+APIs. See
 [`CHANGELOG.md`](CHANGELOG.md) for the release contents and
-[`ROADMAP.md`](ROADMAP.md) for the planned Python-first Third Person and later
-Lyra milestones.
+[`ROADMAP.md`](ROADMAP.md) for the completed Python-first milestone and later
+hardening/Lyra work.
 
-### Known 0.1.0 boundaries
+### Known 0.2.0 boundaries
 
-Dynamic Python-generated `UClass`/`UFunction` synthesis is temporarily disabled
-while that subsystem is rebuilt on UE5's `FField` reflection model. Generic
-`TSet` property marshalling is also not implemented. The Third Person demo adds
-Python gameplay to the unchanged Blueprint template; migrating the template's
-character, input and animation control logic is a 0.2.0 goal.
+Generic `TSet` property marshalling is not implemented. Release-level runtime
+validation remains Win64-only, and the Third Person parity contract covers
+keyboard/mouse rather than the template's mobile touch UI. Lyra, multiplayer
+authority/replication and broader platform hardening remain later milestones.
 
 To use this source release, place the plugin under a UE 5.8 project's `Plugins`
 directory, regenerate project files, and build it with that UE 5.8 installation.
 The remainder of this README is preserved upstream documentation and may describe
-legacy UE4 or external-Python behavior outside the 0.1.0 support contract above.
+legacy UE4 or external-Python behavior outside the 0.2.0 support contract above.
 
 ## Original upstream documentation
 

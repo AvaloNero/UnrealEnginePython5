@@ -1,208 +1,148 @@
-The Native Subclassing API
---------------------------
+# Native subclassing API
 
-This is the most advanced way to use Python for your gameplay logic, developing plugins or automating tasks.
+UnrealEnginePython 0.2.0 restores runtime Python subclass generation for Unreal
+Engine 5.8. A Python class that derives from an imported Unreal class produces a
+transient `UClass`; declared fields become UE5 `FProperty` objects and annotated
+methods become reflected `UFunction` objects.
 
-It resembles the native way you would work with unreal and c++ but in a (more or less ;) pythonic way.
+This API runs inside Unreal's Python interpreter. It cannot be imported from a
+standalone Python process. The validated configuration is UE 5.8 on Win64 with
+the engine-bundled CPython 3.11 runtime, and it does not require an Engine source
+change.
 
-Anything you define in python subclasses of UObjects is automatically exposed to Blueprints. As python is a dynamic language without strong encapsulation concepts, this looks (at least currently) the best approach from a python-developer point of view.
+## Defining a class
 
-The system is still under heavy development and new ideas are popping up constantly (the main objective is to simplify and speed up  end-users development)
-
-Before starting using it, ensure to understand the exposed reflection system: https://github.com/20tab/UnrealEnginePython#native-methods-vs-reflection
-
-NOTE: currently it works only on python3 as it heavily relies on function annotations.
-
-Subclassing
------------
-
-You can define new classes using standard python subclassing:
-
-```py
+```python
 import unreal_engine as ue
-from unreal_engine.classes import Character, PawnSensingComponent, Pawn
+from unreal_engine.classes import Character, FloatProperty, StrProperty
 
-class Monster(Character):
 
-    # constructor adding a component
+class FloatingCharacter(Character):
+    RiseSpeed = FloatProperty
+    State = StrProperty
+
     def __init__(self):
-        self.sensor = self.add_actor_component(PawnSensingComponent, 'Sensor')
-        
-    # properties can only be set starting from begin play
-    def ReceiveBeginPlay():
-        self.sensor.SightRadius = 17000
-    
-    # this will automatically override the OnSeePawn event
-    def OnSeePawn(self, pawn : Pawn):
-        ue.print_string('seen {}'.format(pawn))
-```
+        self.RiseSpeed = 100.0
+        self.State = "ready"
 
-Another example for a custom trigger:
-
-```py
-import unreal_engine as ue
-from unreal_engine.classes import TriggerBox, Actor
-
-class ExplodeTrigger(TriggerBox):
-
-    def ReceiveActorBeginOverlap(self, other : Actor):
-        ue.log('TRIGGERED BY ' + str(other))
-```
-
-Properties
-----------
-
-Properties can be added to your class as static python class properties:
-
-```py
-import unreal_engine as ue
-from unreal_engine.classes import Character, PawnSensingComponent, Pawn, FloatProperty
-
-class Hero(Character):
-
-    # you can set it from the editor
-    UpSpeed = FloatProperty
-    
-    def ReceiveTick(self, DeltaSeconds: float):
+    def PythonTick(self, DeltaSeconds: float):
         location = self.get_actor_location()
-        location.z += self.UpSpeed * DeltaSeconds
+        location.z += self.RiseSpeed * DeltaSeconds
         self.set_actor_location(location)
+
+    PythonTick.override = "ReceiveTick"
+
+
+# Transient generated classes must be rooted for as long as Unreal may load,
+# spawn or reference them by class object or path.
+FloatingCharacter.add_to_root()
 ```
 
-Array can be specified like this:
+The Python `__init__` function is installed before Unreal creates the class
+default object (CDO), so it can set reflected defaults and create default
+subobjects. It also runs for subsequently constructed instances.
 
-```py
-import unreal_engine as ue
-from unreal_engine.classes import Character, PawnSensingComponent, Pawn, FloatProperty
+## Reflected properties
 
-class Hero(Character):
+Declare a property by assigning an imported Unreal property type on the Python
+class:
 
-    # you can set it from the editor as array
-    UpSpeed = [FloatProperty]
-    
-    def ReceiveTick(self, DeltaSeconds: float):
-        location = self.get_actor_location()
-        location.z += self.UpSpeed[0] * DeltaSeconds
-        self.set_actor_location(location)
+```python
+from unreal_engine.classes import Actor, BoolProperty, FloatProperty, IntProperty
+
+
+class PropertyExample(Actor):
+    Enabled = BoolProperty
+    Count = IntProperty
+    Weight = FloatProperty
+    Samples = [FloatProperty]
+    Target = Actor
+    Scores = {str: IntProperty}
 ```
 
-To map object references to properties:
+The UE 5.8 path supports scalar properties, arrays, maps, object references,
+structs and enums. Generic `TSet` marshalling is not part of the 0.2.0 contract.
 
+## Reflected functions and overrides
 
-```py
-import unreal_engine as ue
-from unreal_engine.classes import Character, PawnSensingComponent, Pawn, FloatProperty
+Public Python methods are reflected when their arguments and return value use
+supported annotations. Arguments without a supported annotation are omitted
+from the reflected signature.
 
-class Hero(Character):
-
-    # you can set it from the editor
-    AnotherCharacter = Character 
-    
-    def ReceiveTick(self, DeltaSeconds: float):
-        ue.log('Hello ' + str(AnotherCharacter))
+```python
+class FunctionExample(Actor):
+    def Add(self, Left: int, Right: int) -> int:
+        return Left + Right
 ```
 
+Use an explicit `override` attribute when replacing a parent reflected event.
+This is the recommended UE5.8 form because it makes the Unreal event name
+unambiguous and lets the Python implementation use a different name:
 
-Functions and Events
---------------------
+```python
+class EventExample(Actor):
+    def PythonBeginPlay(self):
+        ue.log("begin play from Python")
 
-By default any methods having the same signature of an internal virtual one (like ReceiveBeginPlay in the previous examples) will became 
-automagically an override. Pay attention to the function annotation style for helping the blueprint system discovering the type of arguments. Except from self, any argument (or return value) without proper type will result in ignoring the argument:
-
-```py
-import unreal_engine as ue
-from unreal_engine.classes import Character, PawnSensingComponent, Pawn, FloatProperty
-
-class Hero(Character):
-
-    # you can set it from the editor as array
-    UpSpeed = [FloatProperty]
-    
-    # automatic override
-    def ReceiveTick(self, DeltaSeconds: float):
-        location = self.get_actor_location()
-        location.z += self.UpSpeed[0] * DeltaSeconds
-        self.set_actor_location(location)
-        
-    # this new method will be available to blueprints
-    def FunnyNewMethod(self, a_word: str):
-        ue.print_string('This is a word from blueprint: ' + a_word)
+    PythonBeginPlay.override = "ReceiveBeginPlay"
 ```
 
-you can do manual override too:
+The parent function must be an overridable reflected function. In particular,
+the 0.2.0 validation suite exercises a real `BlueprintNativeEvent` override,
+not only a newly declared Python function.
 
-```py
-import unreal_engine as ue
-from unreal_engine.classes import Character, PawnSensingComponent, Pawn, FloatProperty
+The legacy metadata flags remain available for new reflected methods:
 
-class Hero(Character):
-
-    # you can set it from the editor as array
-    UpSpeed = [FloatProperty]
-    
-    # manual override
-    def funny_receive_tick(self, DeltaSeconds: float):
-        location = self.get_actor_location()
-        location.z += self.UpSpeed[0] * DeltaSeconds
-        self.set_actor_location(location)
-    funny_receive_tick.override = 'ReceiveTick'
+```python
+FunctionExample.Add.pure = True
+# Other supported flags include static, event, multicast, server, client and
+# reliable where Unreal's corresponding function rules allow them.
 ```
 
-To mark a method as 'pure' (in the Blueprint sense):
+## Default subobjects
 
-```py
-import unreal_engine as ue
-from unreal_engine.classes import Character
+Default components may be created in `__init__` and attached before the actor is
+spawned:
 
-class Hero(Character):
-        
-    # this new method will be available to blueprints
-    def FunnyNewMethod(self, a_word: str):
-        ue.print_string('This is a word from blueprint: ' + a_word)
-    FunnyNewMethod.pure = True
+```python
+from unreal_engine.classes import CameraComponent, Character, SpringArmComponent
+
+
+class CameraCharacter(Character):
+    CameraBoom = SpringArmComponent
+    FollowCamera = CameraComponent
+
+    def __init__(self):
+        self.CameraBoom = self.create_default_subobject(
+            SpringArmComponent,
+            "CameraBoom",
+        )
+        self.CameraBoom.setup_attachment(self.RootComponent)
+
+        self.FollowCamera = self.create_default_subobject(
+            CameraComponent,
+            "FollowCamera",
+        )
+        self.FollowCamera.setup_attachment(self.CameraBoom, "SpringEndpoint")
 ```
 
-or static:
+`setup_attachment(parent, socket_name=None)` mirrors construction-time scene
+component attachment. Runtime attachment after registration should use the
+appropriate Unreal attachment function instead.
 
-```py
-import unreal_engine as ue
-from unreal_engine.classes import Character
+## Lifetime and redefinition rules
 
-class Hero(Character):
-        
-    # this new static method will be available to blueprints
-    def FunnyStaticMethod():
-        ue.print_string('I am a static method')
-    FunnyStaticMethod.static = True
-```
+- Generated classes are transient. Call `add_to_root()` when a class must
+  survive Unreal garbage collection or be resolved later from a URL/class path.
+- Keep referenced transient assets rooted for the same reason when the class
+  stores them as defaults.
+- Defining a second generated class with the same Unreal name in one process is
+  rejected. Class hot redefinition/reload is not supported in 0.2.0; restart
+  the process to recreate it.
+- UObject access belongs on Unreal's game thread. Python worker threads must not
+  mutate UObjects.
+- Python exceptions raised by reflected callbacks are reported to the Unreal
+  log. Gameplay code should keep callbacks small and handle recoverable errors.
 
-Events can be easily exposed like this:
-
-```py
-class ExplodeTrigger(TriggerBox):
-
-    def WorldDestroyedByDaemons(self):
-        ue.log_warning('WORLD DESTROYED')
-    WorldDestroyedByDaemons.event = True
-```
-
-You can make your events networkedm using the 'multicast', 'server', 'client' and 'reliable' attributes:
-
-```py
-class ExplodeTrigger(TriggerBox):
-
-    # this event will be run on the server and in reliable mode
-    def WorldDestroyedByDaemons(self):
-        ue.log_warning('WORLD DESTROYED')
-    WorldDestroyedByDaemons.event = True
-    WorldDestroyedByDaemons.server = True
-    WorldDestroyedByDaemons.reliable = True
-```
-
-
-Reloading
----------
-
-The hot-reloading system is still under heavy testing, expect a bunch of crashes when you heavily redefine classes.
-
-By the way, the idea is that simply redefining a class in python (for example via unreal_engine.exec) will update the internal unreal definition. Try to stress-test it and report crash backtraces. Thanks a lot !
+See the complete Python-first character, controller and GameMode implementation
+in `Demos/UEPPythonThirdPerson/Overlay/Content/Scripts/uep_python_third_person.py`.

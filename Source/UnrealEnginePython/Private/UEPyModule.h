@@ -36,6 +36,8 @@ PyObject *ue_py_convert_property(FProperty *, uint8 *, int32, bool copy_structs 
 bool ue_py_convert_pyobject(PyObject *, FProperty *, uint8 *, int32);
 PyObject *ue_py_new_fproperty_capsule(FProperty *);
 FProperty *ue_py_get_fproperty_from_capsule(PyObject *);
+PyObject *ue_py_new_ffield_class_capsule(FFieldClass *);
+FFieldClass *ue_py_get_ffield_class_from_capsule(PyObject *);
 ue_PyUObject *ue_is_pyuobject(PyObject *);
 
 template <typename T>
