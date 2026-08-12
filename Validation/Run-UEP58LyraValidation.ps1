@@ -15,6 +15,9 @@ param(
     [int]$MaxParallelActions = 2,
     [ValidateRange(30, 600)]
     [int]$RuntimeTimeoutSeconds = 180,
+    [ValidateRange(0.01, 25.0)]
+    [double]$GameplaySliceDamage = 10.0,
+    [switch]$SkipGameplaySlice,
     [switch]$Incremental
 )
 
@@ -321,7 +324,9 @@ function Assert-LyraRuntime {
         [Parameter(Mandatory = $true)][string]$ExpectedMode,
         [Parameter(Mandatory = $true)][string[]]$ExpectedActiveFeatures,
         [Parameter(Mandatory = $true)][string[]]$ExpectedRegisteredFeatures,
-        [string]$ExpectedExperienceContains = ""
+        [string]$ExpectedExperienceContains = "",
+        [switch]$ExpectGameplaySlice,
+        [double]$ExpectedGameplayDamage = 10.0
     )
     if (!(Test-Path -LiteralPath $ResultPath -PathType Leaf)) {
         throw "Lyra runtime result was not created: $ResultPath"
@@ -357,8 +362,49 @@ function Assert-LyraRuntime {
         }
     }
 
+    if ($ExpectGameplaySlice) {
+        if (!$report.PSObject.Properties["gameplay_slice"]) {
+            throw "Lyra $ExpectedMode report lacks gameplay-slice evidence: $ResultPath"
+        }
+        $gameplay = $report.gameplay_slice
+        if (!$gameplay.enabled -or !$gameplay.completed -or $gameplay.state -ne "completed") {
+            throw "Lyra $ExpectedMode gameplay slice did not complete: $ResultPath"
+        }
+        if (!$report.snapshot.health_ready -or $report.snapshot.damage_immune -or
+            [math]::Abs([double]$report.snapshot.health - [double]$gameplay.baseline_health) -gt 0.05 -or
+            [math]::Abs([double]$gameplay.restored_health - [double]$gameplay.baseline_health) -gt 0.05 -or
+            [math]::Abs(([double]$gameplay.baseline_health - [double]$gameplay.observed_damaged_health) - $ExpectedGameplayDamage) -gt 0.05) {
+            throw "Lyra $ExpectedMode gameplay health evidence is inconsistent: $ResultPath"
+        }
+
+        foreach ($commandName in @("damage_command", "heal_command")) {
+            $command = $gameplay.$commandName
+            if (!$command -or $command.status -ne "Applied" -or !$command.accepted -or !$command.applied -or
+                !$command.server_authority -or !([string]$command.target_actor)) {
+                throw "Lyra $ExpectedMode gameplay command '$commandName' was not authority-applied: $ResultPath"
+            }
+        }
+        if ([math]::Abs([double]$gameplay.damage_command.requested_health_delta + $ExpectedGameplayDamage) -gt 0.001 -or
+            [math]::Abs([double]$gameplay.heal_command.requested_health_delta - $ExpectedGameplayDamage) -gt 0.001) {
+            throw "Lyra $ExpectedMode gameplay command magnitudes are inconsistent: $ResultPath"
+        }
+        if (!$gameplay.duplicate_command -or
+            $gameplay.duplicate_command.status -ne "RejectedDuplicateCommand" -or
+            $gameplay.duplicate_command.accepted -or $gameplay.duplicate_command.applied) {
+            throw "Lyra $ExpectedMode duplicate gameplay command was not rejected: $ResultPath"
+        }
+        if ($ExpectedMode -in @("server", "client")) {
+            $rejection = $gameplay.client_authority_rejection
+            if (!$rejection -or $rejection.status -ne "RejectedNotAuthority" -or
+                $rejection.accepted -or $rejection.applied -or $rejection.server_authority) {
+                throw "Lyra $ExpectedMode lacks client authority-rejection evidence: $ResultPath"
+            }
+        }
+    }
+
     $logContents = Get-Content -LiteralPath $UnrealLogPath -Raw
-    foreach ($marker in @(
+    $requiredLogMarkers = [System.Collections.Generic.List[string]]::new()
+    $requiredLogMarkers.AddRange([string[]]@(
         "Initialized engine CPython at",
         "UEP_LYRA_SCRIPT_LOADED",
         "UEP_LYRA_BRIDGE_ATTACHED",
@@ -366,7 +412,11 @@ function Assert-LyraRuntime {
         "Object subsystem successfully closed",
         "Goodbye Python",
         "Log file closed"
-    )) {
+    ))
+    if ($ExpectGameplaySlice) {
+        $requiredLogMarkers.Add("UEP_LYRA_GAMEPLAY_SLICE_PASSED")
+    }
+    foreach ($marker in $requiredLogMarkers) {
         if (!$logContents.Contains($marker)) {
             throw "Lyra $ExpectedMode log is missing '$marker': $UnrealLogPath"
         }
@@ -390,7 +440,10 @@ function Get-LyraRuntimeArguments {
         [Parameter(Mandatory = $true)][int]$TimeoutSeconds,
         [string]$Experience = "",
         [int]$HoldReadySeconds = 0,
-        [string]$ReadyReleaseFile = ""
+        [string]$ReadyReleaseFile = "",
+        [switch]$GameplaySlice,
+        [string]$GameplaySyncDir = "",
+        [double]$GameplayDamage = 10.0
     )
     $arguments = [System.Collections.Generic.List[string]]::new()
     foreach ($argument in @(
@@ -427,6 +480,13 @@ function Get-LyraRuntimeArguments {
     if ($ReadyReleaseFile) {
         $arguments.Add("-UEPLyraReadyReleaseFile=$ReadyReleaseFile")
     }
+    if ($GameplaySlice) {
+        $arguments.Add("-UEPLyraGameplaySlice")
+        $arguments.Add("-UEPLyraGameplayDamage=$GameplayDamage")
+        if ($GameplaySyncDir) {
+            $arguments.Add("-UEPLyraGameplaySyncDir=$GameplaySyncDir")
+        }
+    }
     return $arguments.ToArray()
 }
 
@@ -457,10 +517,12 @@ $stageRoot = Join-Path $outputRootPath "Stage\Lyra"
 $stageMarkerPath = Join-Path $stageRoot ".uep-lyra-full-stage.json"
 $packageRoot = Join-Path $outputRootPath "Package"
 $packageMarkerPath = Join-Path $packageRoot ".uep-lyra-full-package.json"
+$gameplaySliceEnabled = !$SkipGameplaySlice.IsPresent -and $Mode -ne "Readiness"
+$gameplayRuntimeMap = if ($gameplaySliceEnabled) { "${GameplayMap}?NumBots=3" } else { $GameplayMap }
 New-Item -ItemType Directory -Path $resultRoot -Force | Out-Null
 
 $summary = [ordered]@{
-    schema_version = 1
+    schema_version = 2
     status = "failed"
     run_id = $runId
     mode = $Mode
@@ -469,6 +531,8 @@ $summary = [ordered]@{
     lyra_project = $lyraProjectPath
     stage_project = $null
     stage_runtime_disabled_plugins = @()
+    gameplay_slice_enabled = $gameplaySliceEnabled
+    gameplay_slice_damage = if ($gameplaySliceEnabled) { $GameplaySliceDamage } else { $null }
     package_output_root = if ($Mode -in @("Package", "All")) { $packageRoot } else { $null }
     readiness = $null
     editor_build = $null
@@ -668,11 +732,11 @@ try {
             $standaloneResult = Join-Path $resultRoot "standalone.json"
             $standaloneStdout = Join-Path $resultRoot "standalone-stdout.log"
             $standaloneLog = Join-Path $resultRoot "standalone.log"
-            $standaloneArguments = @($stageProject, $GameplayMap, "-game") +
-                (Get-LyraRuntimeArguments -TargetMode "standalone" -ResultPath $standaloneResult -UnrealLogPath $standaloneLog -ExpectedControllers 1 -ActiveFeatures $RequiredActiveGameFeatures -RegisteredFeatures $RequiredRegisteredGameFeatures -TimeoutSeconds $RuntimeTimeoutSeconds -Experience $ExpectedExperience)
+            $standaloneArguments = @($stageProject, $gameplayRuntimeMap, "-game") +
+                (Get-LyraRuntimeArguments -TargetMode "standalone" -ResultPath $standaloneResult -UnrealLogPath $standaloneLog -ExpectedControllers 1 -ActiveFeatures $RequiredActiveGameFeatures -RegisteredFeatures $RequiredRegisteredGameFeatures -TimeoutSeconds $RuntimeTimeoutSeconds -Experience $ExpectedExperience -GameplaySlice:$gameplaySliceEnabled -GameplayDamage $GameplaySliceDamage)
             $standaloneProcess = Invoke-LoggedProcess -FilePath $editorPath -ArgumentList $standaloneArguments -WorkingDirectory $stageRoot -LogPath $standaloneStdout -Label "Lyra standalone gameplay" -TimeoutSeconds ($RuntimeTimeoutSeconds + 120)
-            $standaloneReport = Assert-LyraRuntime -ResultPath $standaloneResult -UnrealLogPath $standaloneLog -ExpectedMode "standalone" -ExpectedActiveFeatures $RequiredActiveGameFeatures -ExpectedRegisteredFeatures $RequiredRegisteredGameFeatures -ExpectedExperienceContains $ExpectedExperience
-            $summary.standalone = [ordered]@{ process = $standaloneProcess; report = $standaloneResult; unreal_log = $standaloneLog; snapshot = $standaloneReport.snapshot }
+            $standaloneReport = Assert-LyraRuntime -ResultPath $standaloneResult -UnrealLogPath $standaloneLog -ExpectedMode "standalone" -ExpectedActiveFeatures $RequiredActiveGameFeatures -ExpectedRegisteredFeatures $RequiredRegisteredGameFeatures -ExpectedExperienceContains $ExpectedExperience -ExpectGameplaySlice:$gameplaySliceEnabled -ExpectedGameplayDamage $GameplaySliceDamage
+            $summary.standalone = [ordered]@{ process = $standaloneProcess; report = $standaloneResult; unreal_log = $standaloneLog; snapshot = $standaloneReport.snapshot; gameplay_slice = $standaloneReport.gameplay_slice }
         }
 
         if ($Mode -in @("Network", "All")) {
@@ -688,10 +752,14 @@ try {
             $clientStdout = Join-Path $resultRoot "client-stdout.log"
             $clientLog = Join-Path $resultRoot "client.log"
             $networkReleaseFile = Join-Path $resultRoot "network-ready.release"
-            $serverArguments = @($stageProject, $GameplayMap, "-server", "-port=$ServerPort", "-Multiprocess") +
-                (Get-LyraRuntimeArguments -TargetMode "server" -ResultPath $serverResult -UnrealLogPath $serverLog -ExpectedControllers 1 -ActiveFeatures $RequiredActiveGameFeatures -RegisteredFeatures $RequiredRegisteredGameFeatures -TimeoutSeconds $RuntimeTimeoutSeconds -Experience $ExpectedExperience -ReadyReleaseFile $networkReleaseFile)
+            $gameplaySyncDir = Join-Path $resultRoot "gameplay-sync"
+            if ($gameplaySliceEnabled) {
+                New-Item -ItemType Directory -Path $gameplaySyncDir -Force | Out-Null
+            }
+            $serverArguments = @($stageProject, $gameplayRuntimeMap, "-server", "-port=$ServerPort", "-multihome=127.0.0.1", "-Multiprocess") +
+                (Get-LyraRuntimeArguments -TargetMode "server" -ResultPath $serverResult -UnrealLogPath $serverLog -ExpectedControllers 1 -ActiveFeatures $RequiredActiveGameFeatures -RegisteredFeatures $RequiredRegisteredGameFeatures -TimeoutSeconds $RuntimeTimeoutSeconds -Experience $ExpectedExperience -ReadyReleaseFile $networkReleaseFile -GameplaySlice:$gameplaySliceEnabled -GameplaySyncDir $gameplaySyncDir -GameplayDamage $GameplaySliceDamage)
             $clientArguments = @($stageProject, "127.0.0.1:$ServerPort", "-game", "-Multiprocess") +
-                (Get-LyraRuntimeArguments -TargetMode "client" -ResultPath $clientResult -UnrealLogPath $clientLog -ExpectedControllers 1 -ActiveFeatures $RequiredActiveGameFeatures -RegisteredFeatures $RequiredRegisteredGameFeatures -TimeoutSeconds $RuntimeTimeoutSeconds -Experience $ExpectedExperience -ReadyReleaseFile $networkReleaseFile)
+                (Get-LyraRuntimeArguments -TargetMode "client" -ResultPath $clientResult -UnrealLogPath $clientLog -ExpectedControllers 1 -ActiveFeatures $RequiredActiveGameFeatures -RegisteredFeatures $RequiredRegisteredGameFeatures -TimeoutSeconds $RuntimeTimeoutSeconds -Experience $ExpectedExperience -ReadyReleaseFile $networkReleaseFile -GameplaySlice:$gameplaySliceEnabled -GameplaySyncDir $gameplaySyncDir -GameplayDamage $GameplaySliceDamage)
             $serverHandle = $null
             $clientHandle = $null
             try {
@@ -709,13 +777,14 @@ try {
                 Stop-LoggedProcess -Handle $clientHandle
                 Stop-LoggedProcess -Handle $serverHandle
             }
-            $clientReport = Assert-LyraRuntime -ResultPath $clientResult -UnrealLogPath $clientLog -ExpectedMode "client" -ExpectedActiveFeatures $RequiredActiveGameFeatures -ExpectedRegisteredFeatures $RequiredRegisteredGameFeatures -ExpectedExperienceContains $ExpectedExperience
-            $serverReport = Assert-LyraRuntime -ResultPath $serverResult -UnrealLogPath $serverLog -ExpectedMode "server" -ExpectedActiveFeatures $RequiredActiveGameFeatures -ExpectedRegisteredFeatures $RequiredRegisteredGameFeatures -ExpectedExperienceContains $ExpectedExperience
+            $clientReport = Assert-LyraRuntime -ResultPath $clientResult -UnrealLogPath $clientLog -ExpectedMode "client" -ExpectedActiveFeatures $RequiredActiveGameFeatures -ExpectedRegisteredFeatures $RequiredRegisteredGameFeatures -ExpectedExperienceContains $ExpectedExperience -ExpectGameplaySlice:$gameplaySliceEnabled -ExpectedGameplayDamage $GameplaySliceDamage
+            $serverReport = Assert-LyraRuntime -ResultPath $serverResult -UnrealLogPath $serverLog -ExpectedMode "server" -ExpectedActiveFeatures $RequiredActiveGameFeatures -ExpectedRegisteredFeatures $RequiredRegisteredGameFeatures -ExpectedExperienceContains $ExpectedExperience -ExpectGameplaySlice:$gameplaySliceEnabled -ExpectedGameplayDamage $GameplaySliceDamage
             $summary.network = [ordered]@{
                 port = $ServerPort
                 release_signal = $networkReleaseFile
-                server = [ordered]@{ process = $serverProcess; report = $serverResult; unreal_log = $serverLog; snapshot = $serverReport.snapshot }
-                client = [ordered]@{ process = $clientProcess; report = $clientResult; unreal_log = $clientLog; snapshot = $clientReport.snapshot }
+                gameplay_sync = if ($gameplaySliceEnabled) { $gameplaySyncDir } else { $null }
+                server = [ordered]@{ process = $serverProcess; report = $serverResult; unreal_log = $serverLog; snapshot = $serverReport.snapshot; gameplay_slice = $serverReport.gameplay_slice }
+                client = [ordered]@{ process = $clientProcess; report = $clientResult; unreal_log = $clientLog; snapshot = $clientReport.snapshot; gameplay_slice = $clientReport.gameplay_slice }
             }
         }
 
@@ -804,11 +873,11 @@ try {
             $packagedLog = Join-Path $resultRoot "packaged.log"
             $packagedArguments = @(
                 "-basedir=$(Split-Path -Parent $packagedInternalExecutable)",
-                $GameplayMap
+                $gameplayRuntimeMap
             ) +
-                (Get-LyraRuntimeArguments -TargetMode "packaged" -ResultPath $packagedResult -UnrealLogPath $packagedLog -ExpectedControllers 1 -ActiveFeatures $RequiredActiveGameFeatures -RegisteredFeatures $RequiredRegisteredGameFeatures -TimeoutSeconds $RuntimeTimeoutSeconds -Experience $ExpectedExperience)
+                (Get-LyraRuntimeArguments -TargetMode "packaged" -ResultPath $packagedResult -UnrealLogPath $packagedLog -ExpectedControllers 1 -ActiveFeatures $RequiredActiveGameFeatures -RegisteredFeatures $RequiredRegisteredGameFeatures -TimeoutSeconds $RuntimeTimeoutSeconds -Experience $ExpectedExperience -GameplaySlice:$gameplaySliceEnabled -GameplayDamage $GameplaySliceDamage)
             $packagedRuntime = Invoke-LoggedProcess -FilePath $packagedNetworkExecutable -ArgumentList $packagedArguments -WorkingDirectory $packagedNetworkDirectory -LogPath $packagedStdout -Label "Packaged Lyra gameplay" -TimeoutSeconds ($RuntimeTimeoutSeconds + 120)
-            $packagedReport = Assert-LyraRuntime -ResultPath $packagedResult -UnrealLogPath $packagedLog -ExpectedMode "packaged" -ExpectedActiveFeatures $RequiredActiveGameFeatures -ExpectedRegisteredFeatures $RequiredRegisteredGameFeatures -ExpectedExperienceContains $ExpectedExperience
+            $packagedReport = Assert-LyraRuntime -ResultPath $packagedResult -UnrealLogPath $packagedLog -ExpectedMode "packaged" -ExpectedActiveFeatures $RequiredActiveGameFeatures -ExpectedRegisteredFeatures $RequiredRegisteredGameFeatures -ExpectedExperienceContains $ExpectedExperience -ExpectGameplaySlice:$gameplaySliceEnabled -ExpectedGameplayDamage $GameplaySliceDamage
             $summary.package = [ordered]@{
                 process = $packageProcess
                 uat_log = $packageLog
@@ -822,11 +891,12 @@ try {
                 report = $packagedResult
                 unreal_log = $packagedLog
                 snapshot = $packagedReport.snapshot
+                gameplay_slice = $packagedReport.gameplay_slice
             }
         }
 
         $summary.status = "passed"
-        $summary.full_acceptance = $Mode -eq "All"
+        $summary.full_acceptance = $Mode -eq "All" -and $gameplaySliceEnabled
     }
 }
 catch {

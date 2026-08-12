@@ -467,6 +467,7 @@ try {
             "-platform=Win64",
             "-clientconfig=$Configuration",
             "-target=UEP58Host",
+            "-ubtargs=-NoUBA -MaxParallelActions=$MaxParallelActions",
             "-build",
             "-cook",
             "-stage",
@@ -481,7 +482,7 @@ try {
             uebp_LogFolder = $packageLogRoot
             uebp_FinalLogFolder = $packageLogRoot
         }
-        Invoke-CheckedProcess -FilePath $dotnetPath -ArgumentList $packageArguments -Label "Cook and package" -WorkingDirectory $engineRootPath -TimeoutSeconds 3600 -EnvironmentVariables $packageEnvironment
+        Invoke-CheckedProcess -FilePath $dotnetPath -ArgumentList $packageArguments -Label "Cook and package" -WorkingDirectory $engineRootPath -TimeoutSeconds 7200 -EnvironmentVariables $packageEnvironment
         Assert-AutomationLog $packageLog
         $buildLogs.Add($packageLog)
 

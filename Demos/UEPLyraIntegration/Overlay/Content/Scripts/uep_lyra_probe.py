@@ -1,6 +1,8 @@
-"""Read-only Lyra lifecycle probe used by automated and interactive runs."""
+"""Lyra lifecycle and authority-only gameplay probe for automated runs."""
 
 import json
+import math
+import os
 from pathlib import Path
 import re
 import sys
@@ -21,6 +23,9 @@ REQUIRED_REGISTERED_FEATURES_PREFIX = "-UEPLyraRequiredRegisteredFeatures="
 EXPECTED_EXPERIENCE_PREFIX = "-UEPLyraExpectedExperienceContains="
 HOLD_READY_PREFIX = "-UEPLyraHoldReadySeconds="
 READY_RELEASE_PREFIX = "-UEPLyraReadyReleaseFile="
+GAMEPLAY_SLICE = "-UEPLyraGameplaySlice"
+GAMEPLAY_SYNC_DIR_PREFIX = "-UEPLyraGameplaySyncDir="
+GAMEPLAY_DAMAGE_PREFIX = "-UEPLyraGameplayDamage="
 
 
 def _command_line_value(prefix, default=None):
@@ -86,6 +91,24 @@ class LyraRuntimeProbe:
         self.expected_experience = _command_line_value(EXPECTED_EXPERIENCE_PREFIX, "")
         self.hold_ready_seconds = max(0.0, _command_line_float(HOLD_READY_PREFIX, 0.0))
         self.ready_release_path = _command_line_value(READY_RELEASE_PREFIX)
+        self.gameplay_slice_enabled = _has_argument(GAMEPLAY_SLICE)
+        self.gameplay_sync_path = _command_line_value(GAMEPLAY_SYNC_DIR_PREFIX)
+        self.gameplay_damage = _command_line_float(GAMEPLAY_DAMAGE_PREFIX, 10.0)
+        self.gameplay = {
+            "enabled": self.gameplay_slice_enabled,
+            "completed": False,
+            "state": "waiting_readiness" if self.gameplay_slice_enabled else "disabled",
+            "damage_amount": self.gameplay_damage,
+            "baseline_health": None,
+            "expected_damaged_health": None,
+            "observed_damaged_health": None,
+            "restored_health": None,
+            "client_authority_rejection": None,
+            "damage_command": None,
+            "duplicate_command": None,
+            "heal_command": None,
+            "events": [],
+        }
         self.ready_since = None
         self.ready_announced = False
         self.ready_snapshot_report = None
@@ -176,8 +199,312 @@ class LyraRuntimeProbe:
             "pawn_remote_role": _field(snapshot, "PawnRemoteRole", ""),
             "hero_input_ready": bool(_field(snapshot, "bHeroInputReady", False)),
             "ability_system_ready": bool(_field(snapshot, "bAbilitySystemReady", False)),
+            "health_ready": bool(_field(snapshot, "bHealthReady", False)),
+            "damage_immune": bool(_field(snapshot, "bDamageImmune", False)),
+            "health": float(_field(snapshot, "Health", 0.0)),
+            "max_health": float(_field(snapshot, "MaxHealth", 0.0)),
             "game_features": self._feature_states(snapshot),
         }
+
+    @staticmethod
+    def _nearly_equal(left, right, tolerance=0.05):
+        return abs(float(left) - float(right)) <= tolerance
+
+    @staticmethod
+    def _command_result_report(result):
+        return {
+            "command_id": _field(result, "CommandId", ""),
+            "status": _field(result, "Status", ""),
+            "accepted": bool(_field(result, "bAccepted", False)),
+            "applied": bool(_field(result, "bApplied", False)),
+            "server_authority": bool(_field(result, "bServerAuthority", False)),
+            "target_actor": _field(result, "TargetActor", ""),
+            "requested_health_delta": float(
+                _field(result, "RequestedHealthDelta", 0.0)
+            ),
+            "health_before": float(_field(result, "HealthBefore", 0.0)),
+            "health_after": float(_field(result, "HealthAfter", 0.0)),
+            "max_health": float(_field(result, "MaxHealth", 0.0)),
+        }
+
+    def _apply_health_delta(self, command_id, health_delta, target_remote_player):
+        result = self.bridge.call_function(
+            "ApplyAuthorityHealthDelta",
+            command_id,
+            float(health_delta),
+            bool(target_remote_player),
+        )
+        return self._command_result_report(result)
+
+    @staticmethod
+    def _assert_command(command, expected_status, expected_applied):
+        if command["status"] != expected_status:
+            raise RuntimeError(
+                "gameplay command {0} returned {1}, expected {2}".format(
+                    command["command_id"], command["status"], expected_status
+                )
+            )
+        if command["applied"] != expected_applied:
+            raise RuntimeError(
+                "gameplay command {0} applied={1}, expected {2}".format(
+                    command["command_id"], command["applied"], expected_applied
+                )
+            )
+
+    def _sync_file(self, name):
+        if not self.gameplay_sync_path:
+            raise RuntimeError("network gameplay slice requires -UEPLyraGameplaySyncDir")
+        return Path(self.gameplay_sync_path) / name
+
+    def _write_sync(self, name, payload):
+        path = self._sync_file(name)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_name(".{0}.{1}.tmp".format(path.name, self.mode))
+        temporary.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        os.replace(str(temporary), str(path))
+
+    def _read_sync(self, name):
+        path = self._sync_file(name)
+        if not path.is_file():
+            return None
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+
+    def _record_gameplay_event(self, name, health=None):
+        event = {"name": name, "world_tick": self.world_ticks}
+        if health is not None:
+            event["health"] = float(health)
+        self.gameplay["events"].append(event)
+
+    def _complete_gameplay_slice(self, restored_health):
+        self.gameplay["restored_health"] = float(restored_health)
+        self.gameplay["state"] = "completed"
+        self.gameplay["completed"] = True
+        self._record_gameplay_event("completed", restored_health)
+        ue.log("UEP_LYRA_GAMEPLAY_SLICE_COMPLETE {0}".format(self.mode))
+
+    def _advance_local_gameplay_slice(self, report):
+        state = self.gameplay["state"]
+        if state == "waiting_readiness":
+            baseline = report["health"]
+            damage_delta = -self.gameplay_damage
+            damage = self._apply_health_delta("uep05.local.damage", damage_delta, False)
+            self._assert_command(damage, "Applied", True)
+            duplicate = self._apply_health_delta("uep05.local.damage", damage_delta, False)
+            self._assert_command(duplicate, "RejectedDuplicateCommand", False)
+            expected = baseline + damage_delta
+            if not self._nearly_equal(damage["health_before"], baseline):
+                raise RuntimeError("local damage baseline did not match the observed snapshot")
+            if not self._nearly_equal(damage["health_after"], expected):
+                raise RuntimeError("local damage did not produce the requested health delta")
+            self.gameplay["baseline_health"] = baseline
+            self.gameplay["expected_damaged_health"] = expected
+            self.gameplay["damage_command"] = damage
+            self.gameplay["duplicate_command"] = duplicate
+            self.gameplay["state"] = "waiting_damage_observation"
+            self._record_gameplay_event("damage_applied", damage["health_after"])
+            return False
+
+        if state == "waiting_damage_observation":
+            expected = self.gameplay["expected_damaged_health"]
+            if not self._nearly_equal(report["health"], expected):
+                return False
+            self.gameplay["observed_damaged_health"] = report["health"]
+            self._record_gameplay_event("damage_observed", report["health"])
+            heal = self._apply_health_delta("uep05.local.heal", self.gameplay_damage, False)
+            self._assert_command(heal, "Applied", True)
+            if not self._nearly_equal(heal["health_after"], self.gameplay["baseline_health"]):
+                raise RuntimeError("local heal did not restore the baseline health")
+            self.gameplay["heal_command"] = heal
+            self.gameplay["state"] = "waiting_restore_observation"
+            self._record_gameplay_event("heal_applied", heal["health_after"])
+            return False
+
+        if state == "waiting_restore_observation":
+            if not self._nearly_equal(report["health"], self.gameplay["baseline_health"]):
+                return False
+            self._complete_gameplay_slice(report["health"])
+            return True
+
+        return state == "completed"
+
+    def _advance_client_gameplay_slice(self, report):
+        state = self.gameplay["state"]
+        if state == "waiting_readiness":
+            baseline = report["health"]
+            rejection = self._apply_health_delta(
+                "uep05.client.must_reject", -self.gameplay_damage, False
+            )
+            self._assert_command(rejection, "RejectedNotAuthority", False)
+            immediate = self._snapshot_report(self.bridge.call_function("CaptureSnapshot"))
+            if not self._nearly_equal(immediate["health"], baseline):
+                raise RuntimeError("client authority rejection changed local health")
+            self.gameplay["baseline_health"] = baseline
+            self.gameplay["client_authority_rejection"] = rejection
+            self.gameplay["state"] = "waiting_server_damage"
+            self._record_gameplay_event("client_authority_rejected", baseline)
+            self._write_sync(
+                "client-denied.json",
+                {
+                    "mode": self.mode,
+                    "baseline_health": baseline,
+                    "command": rejection,
+                },
+            )
+            return False
+
+        if state == "waiting_server_damage":
+            damaged = self._read_sync("server-damaged.json")
+            if damaged is None:
+                return False
+            damage_command = damaged.get("damage_command") or {}
+            duplicate_command = damaged.get("duplicate_command") or {}
+            if damage_command.get("status") != "Applied" or not damage_command.get("applied"):
+                raise RuntimeError("server damage evidence was not an applied command")
+            if duplicate_command.get("status") != "RejectedDuplicateCommand":
+                raise RuntimeError("server duplicate command was not rejected")
+            expected = float(damaged["expected_damaged_health"])
+            self.gameplay["expected_damaged_health"] = expected
+            self.gameplay["damage_command"] = damage_command
+            self.gameplay["duplicate_command"] = duplicate_command
+            if not self._nearly_equal(report["health"], expected):
+                return False
+            self.gameplay["observed_damaged_health"] = report["health"]
+            self.gameplay["state"] = "waiting_server_restore"
+            self._record_gameplay_event("replicated_damage_observed", report["health"])
+            self._write_sync(
+                "client-damage-observed.json",
+                {"mode": self.mode, "observed_health": report["health"]},
+            )
+            return False
+
+        if state == "waiting_server_restore":
+            restored = self._read_sync("server-restored.json")
+            if restored is None:
+                return False
+            heal_command = restored.get("heal_command") or {}
+            if heal_command.get("status") != "Applied" or not heal_command.get("applied"):
+                raise RuntimeError("server heal evidence was not an applied command")
+            expected = float(restored["restored_health"])
+            self.gameplay["heal_command"] = heal_command
+            if not self._nearly_equal(report["health"], expected):
+                return False
+            self._record_gameplay_event("replicated_restore_observed", report["health"])
+            self._write_sync(
+                "client-restore-observed.json",
+                {"mode": self.mode, "observed_health": report["health"]},
+            )
+            self._complete_gameplay_slice(report["health"])
+            return True
+
+        return state == "completed"
+
+    def _advance_server_gameplay_slice(self, report):
+        state = self.gameplay["state"]
+        if state == "waiting_readiness":
+            self.gameplay["baseline_health"] = report["health"]
+            self.gameplay["state"] = "waiting_client_authority_rejection"
+            return False
+
+        if state == "waiting_client_authority_rejection":
+            denied = self._read_sync("client-denied.json")
+            if denied is None:
+                return False
+            rejection = denied.get("command") or {}
+            if rejection.get("status") != "RejectedNotAuthority" or rejection.get("applied"):
+                raise RuntimeError("client did not prove local authority rejection")
+            client_baseline = float(denied["baseline_health"])
+            if not self._nearly_equal(report["health"], client_baseline):
+                raise RuntimeError("server and client health baselines did not converge")
+
+            damage_delta = -self.gameplay_damage
+            damage = self._apply_health_delta("uep05.server.damage", damage_delta, True)
+            self._assert_command(damage, "Applied", True)
+            duplicate = self._apply_health_delta("uep05.server.damage", damage_delta, True)
+            self._assert_command(duplicate, "RejectedDuplicateCommand", False)
+            expected = damage["health_before"] + damage_delta
+            if not self._nearly_equal(damage["health_after"], expected):
+                raise RuntimeError("server damage did not produce the requested health delta")
+
+            self.gameplay["baseline_health"] = damage["health_before"]
+            self.gameplay["expected_damaged_health"] = expected
+            self.gameplay["damage_command"] = damage
+            self.gameplay["duplicate_command"] = duplicate
+            self.gameplay["client_authority_rejection"] = rejection
+            self.gameplay["state"] = "waiting_client_damage_observation"
+            self._record_gameplay_event("server_damage_applied", damage["health_after"])
+            self._write_sync(
+                "server-damaged.json",
+                {
+                    "mode": self.mode,
+                    "baseline_health": damage["health_before"],
+                    "expected_damaged_health": expected,
+                    "damage_command": damage,
+                    "duplicate_command": duplicate,
+                },
+            )
+            return False
+
+        if state == "waiting_client_damage_observation":
+            observed = self._read_sync("client-damage-observed.json")
+            if observed is None:
+                return False
+            if not self._nearly_equal(
+                observed["observed_health"], self.gameplay["expected_damaged_health"]
+            ):
+                raise RuntimeError("client damage observation did not match server health")
+            if not self._nearly_equal(report["health"], self.gameplay["expected_damaged_health"]):
+                raise RuntimeError("server health changed before the restore command")
+
+            heal = self._apply_health_delta("uep05.server.heal", self.gameplay_damage, True)
+            self._assert_command(heal, "Applied", True)
+            if not self._nearly_equal(heal["health_after"], self.gameplay["baseline_health"]):
+                raise RuntimeError("server heal did not restore the baseline health")
+            self.gameplay["observed_damaged_health"] = float(observed["observed_health"])
+            self.gameplay["heal_command"] = heal
+            self.gameplay["state"] = "waiting_client_restore_observation"
+            self._record_gameplay_event("server_heal_applied", heal["health_after"])
+            self._write_sync(
+                "server-restored.json",
+                {
+                    "mode": self.mode,
+                    "restored_health": heal["health_after"],
+                    "heal_command": heal,
+                },
+            )
+            return False
+
+        if state == "waiting_client_restore_observation":
+            observed = self._read_sync("client-restore-observed.json")
+            if observed is None:
+                return False
+            if not self._nearly_equal(
+                observed["observed_health"], self.gameplay["baseline_health"]
+            ):
+                raise RuntimeError("client restore observation did not match baseline health")
+            self._complete_gameplay_slice(report["health"])
+            return True
+
+        return state == "completed"
+
+    def _advance_gameplay_slice(self, report):
+        if not self.gameplay_slice_enabled:
+            return True
+        if (
+            not math.isfinite(self.gameplay_damage)
+            or self.gameplay_damage <= 0.0
+            or self.gameplay_damage > 25.0
+        ):
+            raise RuntimeError("gameplay damage must be finite and in the range (0, 25]")
+        if self.mode in ("standalone", "packaged"):
+            return self._advance_local_gameplay_slice(report)
+        if self.mode == "client":
+            return self._advance_client_gameplay_slice(report)
+        if self.mode == "server":
+            return self._advance_server_gameplay_slice(report)
+        raise RuntimeError("gameplay slice is not supported for mode {0}".format(self.mode))
 
     def _pending_requirements(self, report):
         pending = []
@@ -191,6 +518,13 @@ class LyraRuntimeProbe:
             experience = report["experience"] or ""
             if self.expected_experience.lower() not in experience.lower():
                 pending.append("Experience containing {0}".format(self.expected_experience))
+        if self.gameplay_slice_enabled:
+            if not report["health_ready"]:
+                pending.append("Lyra Health Component")
+            elif report["health"] <= 0.0 or report["max_health"] <= 0.0:
+                pending.append("positive Lyra health")
+            if report["damage_immune"]:
+                pending.append("Lyra gameplay damage enabled")
 
         feature_states = {
             item["name"].lower(): item for item in report["game_features"] if item["name"]
@@ -268,7 +602,7 @@ class LyraRuntimeProbe:
             return
         self.finished = True
         report = {
-            "schema_version": 1,
+            "schema_version": 2,
             "status": status,
             "mode": self.mode,
             "python_version": ".".join(str(value) for value in sys.version_info[:3]),
@@ -282,6 +616,7 @@ class LyraRuntimeProbe:
             "expected_player_controllers": self.expected_player_controllers,
             "hold_ready_seconds": self.hold_ready_seconds,
             "ready_release_gate": bool(self.ready_release_path),
+            "gameplay_slice": self.gameplay,
             "snapshot": snapshot_report,
             "pending_requirements": (
                 self._pending_requirements(snapshot_report) if snapshot_report is not None else []
@@ -291,6 +626,8 @@ class LyraRuntimeProbe:
         path = Path(self.result_path)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+        if status == "passed" and self.gameplay_slice_enabled:
+            ue.log("UEP_LYRA_GAMEPLAY_SLICE_PASSED")
         (ue.log if status == "passed" else ue.log_error)(
             "UEP_LYRA_SMOKE_PASSED" if status == "passed" else "UEP_LYRA_SMOKE_FAILED"
         )
@@ -363,6 +700,15 @@ class LyraRuntimeProbe:
             if self.ready_since is None:
                 self.ready_since = self.elapsed
             if self.elapsed - self.ready_since < self.hold_ready_seconds:
+                return True
+
+            if not self._advance_gameplay_slice(snapshot_report):
+                if self._timed_out():
+                    raise RuntimeError(
+                        "Lyra gameplay slice timed out in state: {0}".format(
+                            self.gameplay["state"]
+                        )
+                    )
                 return True
 
             if self.ready_release_path:

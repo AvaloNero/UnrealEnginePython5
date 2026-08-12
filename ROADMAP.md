@@ -8,7 +8,7 @@ the goal is to move behavior and control logic into Python.
 
 ## 0.1.0 — UE 5.8 foundation
 
-Status: complete.
+Status: implementation complete; exact-source package confirmation deferred.
 
 - Build all runtime and editor plugin modules against UE 5.8.
 - Use the engine-bundled CPython 3.11 runtime.
@@ -125,3 +125,39 @@ The completed boundary keeps Game Feature activation, ability grants, input
 mappings and replicated authority-sensitive state native to Lyra. Python
 observes those states through the disposable bridge. The reference project and
 Unreal Engine source remain unchanged throughout validation.
+
+## 0.5.0 — Python-driven Lyra gameplay slice
+
+Status: complete.
+
+- Add one bounded authority write instead of broad arbitrary GAS access. Python
+  chooses a command ID, health delta, target role and timing; the adapter checks
+  game thread, authority, target readiness, magnitude, non-lethal/non-overheal
+  policy, damage immunity and idempotency.
+- Execute Lyra's existing SetByCaller Damage/Heal Gameplay Effects through the
+  target ASC. Do not write Health directly or replace Lyra replication.
+- Prove client writes are rejected locally with no implicit RPC.
+- Prove a dedicated-server Python process changes a real remote player's Health,
+  client Python observes the replicated damaged value, server Python restores
+  only after that acknowledgement, and client Python observes restoration.
+- Retain the 0.4 observation contract and unchanged external Engine/Lyra trees.
+
+Acceptance gate: strict Standalone, synchronized dedicated-server/client,
+Win64 BuildCookRun and packaged gameplay all pass on UE 5.8 with engine-bundled
+CPython 3.11. Result JSON must record authority rejection, exact `100 -> 90 ->
+100` Health, duplicate-command rejection and orderly shutdown with no compiler,
+fatal/assert or `Log*: Error` diagnostics.
+
+Incremental implementation results `20260812-233341` (Standalone) and
+`20260812-233801` (Network) pass the new command, authority, idempotency and
+replication contract. Formal `All` result `20260812-234501` then passed the
+complete gameplay-slice candidate with `full_acceptance: true`: readiness,
+Editor, Standalone,
+loopback dedicated server/client, Win64 BuildCookRun and packaged execution all
+passed on UE 5.8.0 and CPython 3.11.8. Every process exited 0, the package hashes
+matched, and strict runtime logs contained no fatal/assert/`Log*: Error`
+diagnostics. After the controller selector was hardened to reject ambiguous
+human targets, exact-source results `20260813-005436` (Network) and
+`20260813-005835` (Standalone) passed without another Cook/package. A final
+package confirmation for that exact source is intentionally left as the only
+release-promotion gate.

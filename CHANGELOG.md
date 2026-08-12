@@ -3,6 +3,77 @@
 This file records the UE5 port maintained in this repository. The historical
 UE4 project history remains available in Git.
 
+## [0.5.0] - 2026-08-13
+
+### Added
+
+- `FUEPLyraGameplayCommandResult` and the reflected
+  `ApplyAuthorityHealthDelta` command for one bounded Python-driven Lyra
+  gameplay write. Python owns command IDs, values, target role and sequencing;
+  the adapter dispatches Lyra's configured SetByCaller Damage/Heal Gameplay
+  Effects instead of writing attributes directly.
+- Health/MaxHealth and damage-immunity observations in the Lyra runtime
+  snapshot so Python can wait for the real game phase rather than bypassing GAS
+  policy.
+- Game-thread, server-authority, unambiguous player target, command-format,
+  finite magnitude, non-lethal damage, non-overheal and command-idempotency
+  guards.
+- A machine-readable Standalone/packaged state machine proving damage,
+  duplicate rejection, later-tick observation, healing and restoration.
+- A dedicated-server/client Python handshake proving local client writes are
+  rejected, server GAS changes replicate to the client, and restore occurs only
+  after the client acknowledges the damaged value.
+
+### Changed
+
+- The full Lyra validator enables the 0.5 gameplay slice by default, requests
+  three AI bots to advance Lyra's genuine Warmup phase, and reserves
+  `-SkipGameplaySlice` for non-release diagnostics. An `All` run with the slice
+  disabled cannot report `full_acceptance: true`.
+- Dedicated-server validation binds to `127.0.0.1` in addition to its fixed UDP
+  port, keeping the automated listener off the LAN.
+- Runtime JSON schema version 2 retains the 0.4 readiness snapshot and adds the
+  complete gameplay command/event evidence used by strict PowerShell
+  assertions.
+- The generic Win64 release driver now forwards its bounded parallel-action
+  setting and `-NoUBA` policy into UAT's nested Game build, with a two-hour
+  package timeout for low-memory source-engine workstations.
+
+### Validation
+
+- Incremental Standalone result `20260812-233341` passed UE 5.8.0 and CPython
+  3.11.8 after respecting Lyra Warmup damage immunity. It records exact Health
+  `100 -> 90 -> 100`, `Applied`, `RejectedDuplicateCommand`, `Applied`, clean
+  shutdown and zero strict error diagnostics.
+- Incremental Network result `20260812-233801` passed a real loopback dedicated
+  server and client. Both reports record `RejectedNotAuthority` for the client,
+  authority-applied server Damage/Heal commands, duplicate rejection and client
+  replication observations at 90 and 100 Health.
+- Formal `All` result `20260812-234501` passed the complete 0.5 gameplay-slice
+  candidate with
+  `full_acceptance: true`. Readiness, Editor build, Standalone, dedicated
+  server, client, UAT and packaged gameplay all exited 0; UAT reported
+  `BUILD SUCCESSFUL`, archived 1.89 GiB, and the internal/tested executable
+  SHA-256 values matched. All four runtime logs contained the gameplay pass and
+  orderly-close markers with zero strict fatal/assert/`Log*: Error`
+  diagnostics.
+- After the target selector was hardened to reject multiple matching human
+  controllers, exact-source Network result `20260813-005436` rebuilt only
+  `UEPLyraBridge` and passed client denial, server authority, duplicate-command
+  rejection, replication and restoration. Standalone result
+  `20260813-005835` reused that build and passed the local `100 -> 90 -> 100`
+  sequence. All three runtime logs closed normally with zero strict errors.
+- No new Cook/package was started after that final selector hardening. Result
+  `20260812-234501` remains the latest package-level evidence, while the two
+  2026-08-13 incremental results are the exact-source runtime evidence.
+
+### Supported boundaries
+
+- Lyra continues to own Experience/Game Feature activation, ability grants,
+  input, GAS execution, Health storage and replication. Version 0.5 exposes no
+  arbitrary Gameplay Effect launcher, raw attribute setter or automatic client
+  RPC. Unreal Engine and the external Lyra reference project remain unchanged.
+
 ## [0.4.0] - 2026-08-12
 
 ### Added

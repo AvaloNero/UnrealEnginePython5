@@ -12,13 +12,16 @@ editor, cook and packaged execution so Android deployment tooling is outside
 this acceptance contract. Its package step waits for Unreal's global UAT mutex
 instead of failing or interfering when another project is cooking. It also uses
 UE's loose cooked-package writer so staging does not depend on a transient local
-Zen server remaining alive after Cook exits.
+Zen server remaining alive after Cook exits. The driver's `MaxParallelActions`
+limit and `-NoUBA` policy apply to both direct Editor compilation and UAT's
+nested Game build; the package wait allows two hours so a memory-safe low
+parallelism build is not mistaken for a compiler failure.
 
 ## Core release gate
 
 The core gate is complete only when a clean full run returns exit code 0 and its
 `summary.json` reports `status: passed`, UE 5.8, Python 3.11 and all six required
-suites. The 0.4.0 contract contains 70 required checks: 21 shared core checks,
+suites. The unchanged 0.5.0 core contract contains 70 required checks: 21 shared core checks,
 21 standalone core checks, two isolated exception-recovery checks, five editor
 checks and 21 packaged core checks. The core cases exercise UE5 `FField`-based
 dynamic class/function generation, `TSet`, non-trivial string returns, thread
@@ -155,7 +158,7 @@ The suite records, but does not fail for, these known limitations:
 Runtime exclusions stay visible in suite JSON; platform availability is kept in
 the separate readiness JSON until a real Linux lane result exists.
 
-## Lyra 0.4.0 source and content gates
+## Lyra 0.5.0 source, content and gameplay gates
 
 The Git Lyra sample under a source-engine checkout intentionally omits content.
 Check a candidate project without changing it:
@@ -228,13 +231,18 @@ relaxed. The driver runs these gates without changing the reference project:
 
 1. warning/error-free `LyraEditor` build;
 2. real `L_Expanse` Standalone Experience with active `ShooterCore`, registered
-   content-only `ShooterMaps`, local pawn, PlayerState, Enhanced Input and ASC;
+   content-only `ShooterMaps`, local pawn, PlayerState, Enhanced Input, ASC and
+   Health, followed by Python-driven GAS damage, duplicate rejection and
+   restoration;
 3. a dedicated server/client pair proving remote connection, server authority,
-   client `AutonomousProxy`, replicated PlayerState and ASC on both roles. Both
-   processes wait behind a shared release signal until both readiness markers
+   client `AutonomousProxy`, replicated PlayerState and ASC on both roles. Client
+   Python first proves `RejectedNotAuthority`; server Python then applies 10
+   damage, client Python observes replicated Health 90, server Python restores
+   only after that acknowledgement, and client Python observes Health 100. Both
+   processes wait behind a shared release signal until both completed markers
    have been observed; and
-4. Win64 BuildCookRun followed by the same gameplay contract in `LyraGame.exe`
-   with UEP-owned CPython 3.11.
+4. Win64 BuildCookRun followed by the same `100 -> 90 -> 100` gameplay contract
+   in `LyraGame.exe` with UEP-owned CPython 3.11.
 
 Per-run logs and JSON remain under `Results/<timestamp>`, while the package is
 archived directly to the marker-protected fixed path
@@ -250,6 +258,10 @@ wrapper, original internal executable, tested listener and both hashes.
 Preconfigure TCP/UDP inbound **Block** rules for the stable listener path if the
 host has no existing policy; packaged Standalone validation does not require
 public/private inbound access. Do not disable Firewall notifications globally.
+The Editor-based network lane binds its server only to `127.0.0.1`. To avoid a
+first-listen prompt on a new machine, also preconfigure exact TCP/UDP inbound
+Block rules for `Engine/Binaries/Win64/UnrealEditor-Cmd.exe`; an existing exact
+rule for the active profile is also sufficient.
 
 `-Incremental` retains injected-plugin `Binaries`/`Intermediate`, skips files
 whose size and UTC timestamp are unchanged, and prunes stale owned source files.
@@ -258,7 +270,10 @@ Both direct UBT and BuildCookRun's UBT child default to two non-UBA actions via
 memory.
 
 `Readiness`, `Standalone`, `Network` and `Package` modes run narrower diagnostic
-lanes; only `All` can set `full_acceptance: true`. Negative result
+lanes. The gameplay slice is enabled by default; `-SkipGameplaySlice` exists for
+back-compat diagnostics, but only `All` with the slice enabled can set
+`full_acceptance: true`. `-GameplaySliceDamage` accepts 0.01 through 25 and
+defaults to the release value 10. Negative result
 `20260811-184148` correctly reports `blocked` with 11 missing-content reasons
 and no staging project for the local Git sample.
 
@@ -275,3 +290,23 @@ Formal named-commit result `20260812-051532` validates release-code commit
 client, the 4,046-package Win64 BuildCookRun, and packaged gameplay all passed.
 Every process exited 0, strict UAT/runtime error counts were zero, and the
 archived internal and stable tested executable hashes matched.
+
+For 0.5 development, incremental Standalone result `20260812-233341` passed the
+new authority GAS command and exact `100 -> 90 -> 100` Health lifecycle.
+Incremental Network result `20260812-233801` passed client authority rejection,
+server command idempotency and both client replication observations. Formal
+`All` result `20260812-234501` then passed the complete gameplay-slice candidate
+and reported
+`full_acceptance: true`. Readiness, Editor, Standalone, both network roles, UAT
+and packaged gameplay exited 0; UAT reported `BUILD SUCCESSFUL`, executable
+hashes matched, and strict runtime fatal/error counts were zero.
+
+After the target selector was hardened to reject more than one matching human
+controller, exact-source Network result `20260813-005436` rebuilt only
+`UEPLyraBridge` and passed both roles; Standalone result `20260813-005835` was
+up to date and passed the local sequence. No Cook/package was repeated after
+that hardening, so `20260812-234501` remains the latest package-level result and
+the two 2026-08-13 results are the latest exact-source runtime evidence.
+
+The full ownership and rejection contract is documented in
+[`../docs/Lyra_Gameplay_Slice_0.5.0.md`](../docs/Lyra_Gameplay_Slice_0.5.0.md).

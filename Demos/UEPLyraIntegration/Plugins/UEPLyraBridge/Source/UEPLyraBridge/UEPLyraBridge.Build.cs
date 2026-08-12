@@ -19,6 +19,7 @@ public class UEPLyraBridge : ModuleRules
             new string[]
             {
                 "GameFeatures",
+                "GameplayAbilities",
                 "LyraGame"
             }
         );

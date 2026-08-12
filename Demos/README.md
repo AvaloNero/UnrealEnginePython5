@@ -112,11 +112,14 @@ the base character controls.
 
 ## Lyra integration development
 
-`UEPLyraIntegration` is the 0.4.0 project-side bridge and Python observation
-probe. It is not a Lyra rewrite: Experience activation, Game Feature actions,
-Enhanced Input ownership, ability grants and replication stay in Lyra C++ and
-assets. The current automated lane proves the bridge against Lyra's UE5.8
-source while readiness automation rejects the content-free Git sample for real
-gameplay claims. See
+`UEPLyraIntegration` is the 0.5.0 project-side bridge and Python gameplay probe.
+It is not a Lyra rewrite: Experience activation, Game Feature actions, Enhanced
+Input ownership, ability grants, GAS execution and replication stay in Lyra C++
+and assets. Python owns the validated slice's command values and sequence; a
+narrow C++ adapter rejects unsafe or non-authoritative writes. The automated
+lane proves the bridge against complete Lyra UE5.8 content while readiness
+automation rejects the content-free Git sample for real gameplay claims. See
 [`UEPLyraIntegration/README.md`](UEPLyraIntegration/README.md) and
+[`../docs/Lyra_Gameplay_Slice_0.5.0.md`](../docs/Lyra_Gameplay_Slice_0.5.0.md),
+plus the historical 0.4 boundary in
 [`../docs/Lyra_Integration_0.4.0.md`](../docs/Lyra_Integration_0.4.0.md).

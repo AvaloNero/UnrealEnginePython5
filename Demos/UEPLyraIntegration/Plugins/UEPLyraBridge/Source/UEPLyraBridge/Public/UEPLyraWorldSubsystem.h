@@ -88,14 +88,64 @@ struct UEPLYRABRIDGE_API FUEPLyraRuntimeSnapshot
     bool bAbilitySystemReady = false;
 
     UPROPERTY(BlueprintReadOnly, Category = "UEP|Lyra")
+    bool bHealthReady = false;
+
+    UPROPERTY(BlueprintReadOnly, Category = "UEP|Lyra")
+    bool bDamageImmune = false;
+
+    UPROPERTY(BlueprintReadOnly, Category = "UEP|Lyra")
+    float Health = 0.0f;
+
+    UPROPERTY(BlueprintReadOnly, Category = "UEP|Lyra")
+    float MaxHealth = 0.0f;
+
+    UPROPERTY(BlueprintReadOnly, Category = "UEP|Lyra")
     TArray<FUEPLyraGameFeatureState> GameFeatures;
+};
+
+/** Machine-readable outcome for the narrow, authority-only 0.5 gameplay slice. */
+USTRUCT(BlueprintType)
+struct UEPLYRABRIDGE_API FUEPLyraGameplayCommandResult
+{
+    GENERATED_BODY()
+
+    UPROPERTY(BlueprintReadOnly, Category = "UEP|Lyra|Gameplay")
+    FString CommandId;
+
+    UPROPERTY(BlueprintReadOnly, Category = "UEP|Lyra|Gameplay")
+    FString Status;
+
+    UPROPERTY(BlueprintReadOnly, Category = "UEP|Lyra|Gameplay")
+    bool bAccepted = false;
+
+    UPROPERTY(BlueprintReadOnly, Category = "UEP|Lyra|Gameplay")
+    bool bApplied = false;
+
+    UPROPERTY(BlueprintReadOnly, Category = "UEP|Lyra|Gameplay")
+    bool bServerAuthority = false;
+
+    UPROPERTY(BlueprintReadOnly, Category = "UEP|Lyra|Gameplay")
+    FString TargetActor;
+
+    UPROPERTY(BlueprintReadOnly, Category = "UEP|Lyra|Gameplay")
+    float RequestedHealthDelta = 0.0f;
+
+    UPROPERTY(BlueprintReadOnly, Category = "UEP|Lyra|Gameplay")
+    float HealthBefore = 0.0f;
+
+    UPROPERTY(BlueprintReadOnly, Category = "UEP|Lyra|Gameplay")
+    float HealthAfter = 0.0f;
+
+    UPROPERTY(BlueprintReadOnly, Category = "UEP|Lyra|Gameplay")
+    float MaxHealth = 0.0f;
 };
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FUEPLyraExperienceReady, UObject*, Experience);
 
 /**
- * Per-world adapter for Python. It observes Lyra state but never changes
- * Experience, Game Feature, input, ability, authority, or replicated state.
+ * Per-world adapter for Python. Most of the surface is observational. The
+ * health-delta command is an intentionally narrow 0.5 vertical slice: it can
+ * only submit a bounded, non-lethal Lyra GameplayEffect from server authority.
  */
 UCLASS()
 class UEPLYRABRIDGE_API UUEPLyraWorldSubsystem : public UWorldSubsystem
@@ -108,6 +158,13 @@ public:
 
     UFUNCTION(BlueprintPure, Category = "UEP|Lyra")
     FUEPLyraRuntimeSnapshot CaptureSnapshot() const;
+
+    /** Applies one bounded Lyra GAS delta when exactly one controller matches the requested role. */
+    UFUNCTION(BlueprintCallable, Category = "UEP|Lyra|Gameplay")
+    FUEPLyraGameplayCommandResult ApplyAuthorityHealthDelta(
+        const FString& CommandId,
+        float HealthDelta,
+        bool bTargetRemotePlayer);
 
     UFUNCTION(BlueprintCallable, Category = "UEP|Lyra")
     void ClearPythonListeners();
@@ -126,6 +183,7 @@ private:
     TWeakObjectPtr<ULyraExperienceManagerComponent> ExperienceManager;
     TWeakObjectPtr<UObject> CurrentExperience;
     bool bExperienceCallbackRegistered = false;
+    TSet<FString> ConsumedGameplayCommandIds;
 };
 
 /** Static lookup keeps Python independent of Unreal's subsystem templates. */

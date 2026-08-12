@@ -2,13 +2,14 @@
 
 ## Release-validated platform
 
-UnrealEnginePython 0.4.0 is release-validated on Win64 with Unreal Engine 5.8.0
+UnrealEnginePython 0.5.0 is release-validated on Win64 with Unreal Engine 5.8.0
 and the engine-bundled CPython 3.11.8. The core gate compiles Editor and Game
 plugin targets, runs shared and UEP-owned interpreters, runs full editor tests,
 cooks a Development package and executes the packaged game. The Lyra gate adds
 strict content readiness, Standalone gameplay, synchronized dedicated-
 server/client authority and replication, full Win64 BuildCookRun and packaged
-Experience/Pawn/Input/ASC validation.
+Experience/Pawn/Input/ASC/Health validation plus the bounded Python-driven GAS
+damage, authority rejection, replication and restoration slice.
 
 The final generic Win64 result `20260812-043408` passed 70/70 shared,
 standalone, exception-boundary, Editor/Slate and packaged-runtime checks; its
@@ -17,6 +18,19 @@ Development BuildCookRun completed with UAT ExitCode 0.
 The final Lyra result `20260812-051532` passed the complete `All` lane for named
 release-code commit `c797d56` and reported `full_acceptance: true`, including
 synchronized client/server evidence and a 4,046-package Win64 BuildCookRun.
+
+The 0.5 Lyra result `20260812-234501` passed the expanded `All` lane with
+`full_acceptance: true`: Standalone and packaged processes proved exact Health
+`100 -> 90 -> 100`, the client proved `RejectedNotAuthority`, both network
+roles observed server replication, UAT returned ExitCode 0, and the tested
+executable hashes matched. All runtime processes exited 0 with zero strict
+fatal/assert/`Log*: Error` diagnostics.
+
+The final target-selector hardening then passed exact-source Network result
+`20260813-005436` and Standalone result `20260813-005835`; both use UE 5.8.0,
+CPython 3.11.8 and the same `100 -> 90 -> 100` contract with clean logs. No
+package was rebuilt after that change, so `20260812-234501` remains the latest
+package-level evidence rather than an exact-tree package claim.
 
 No Unreal Engine source change is required or permitted by these workflows.
 
@@ -45,5 +59,5 @@ Recheck without changing the SDK:
 
 Use `-Strict` in CI when missing readiness must return a failure code.
 
-Mac, LinuxArm64, Android and console platforms have no 0.4.0 release-level
+Mac, LinuxArm64, Android and console platforms have no 0.5.0 release-level
 runtime result and are not included in the support claim.

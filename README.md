@@ -3,17 +3,18 @@
 
 ## Unreal Engine 5.8 port
 
-**Current version: 0.4.0**
+**Current version: 0.5.0**
 
-Version 0.4.0 adds a narrow, authority-safe Lyra integration to the hardened UE5
-runtime binding and Python-first Third Person milestone. It targets **Unreal
+Version 0.5.0 adds the first genuinely Python-driven Lyra gameplay slice to the
+hardened UE5 runtime binding, Python-first Third Person demo and 0.4 observation
+bridge. It targets **Unreal
 Engine 5.8**, uses the engine-bundled **CPython 3.11** through UnrealBuildTool's
 `Python3` module, and does not require changes to Unreal Engine source code.
 Windows/Win64 remains the release-validated platform; a Linux lane is provided
 but is not a support claim until it produces a green UE5.8 build/runtime
 artifact.
 
-### 0.4.0 support contract
+### 0.5.0 support contract
 
 The release baseline includes:
 
@@ -42,9 +43,16 @@ The release baseline includes:
   GameMode, camera, keyboard/mouse input and locomotion state are driven by
   Python;
 * a disposable Lyra bridge and strict full-content lane covering Experience and
-  Game Feature state, Pawn/Input/ASC readiness, synchronized dedicated-
+  Game Feature state, Pawn/Input/ASC/Health readiness, synchronized dedicated-
   server/client authority and replication, Win64 cook/package and packaged
-  CPython gameplay without changing the reference project; and
+  CPython gameplay without changing the reference project;
+* a bounded Python-driven Lyra GAS slice in which Python chooses command IDs,
+  health deltas and timing, while the bridge enforces game-thread, authority,
+  target, magnitude, non-lethal, damage-immunity and idempotency rules before
+  dispatching Lyra's native SetByCaller Damage/Heal Gameplay Effects;
+* machine-readable proof that a client cannot write, the server applies exactly
+  one damage command, the client observes replicated health, and a Python-timed
+  heal restores the value on both peers; and
 * deterministic Git source archives, checksums and optional UE5.8 `BuildPlugin`
   binary artifacts.
 
@@ -64,13 +72,16 @@ Lifecycle/thread rules, platform status and release packaging are in
 ### Lyra integration
 
 A disposable project-side bridge exposes read-only Experience, Game Feature,
-Enhanced Input, Ability System and network-role snapshots to Python while Lyra
-remains authoritative. The strict UE5.8 lane covers content readiness, clean
+Enhanced Input, Ability System, Health and network-role snapshots plus one
+narrow authority-only health-delta command. Python orchestrates the vertical
+slice, but Lyra remains authoritative and executes its existing GAS effects.
+The strict UE5.8 lane covers content readiness, clean
 Editor compilation, real Standalone gameplay, a synchronized dedicated-
 server/client pair, Win64 BuildCookRun and the packaged game with UEP-owned
 CPython 3.11.8. It requires graceful shutdown and zero compiler, fatal/assert or
 `Log*: Error` diagnostics. See
-[`docs/Lyra_Integration_0.4.0.md`](docs/Lyra_Integration_0.4.0.md) and
+[`docs/Lyra_Gameplay_Slice_0.5.0.md`](docs/Lyra_Gameplay_Slice_0.5.0.md),
+[`docs/Lyra_Integration_0.4.0.md`](docs/Lyra_Integration_0.4.0.md), and
 [`Demos/UEPLyraIntegration/README.md`](Demos/UEPLyraIntegration/README.md).
 
 The local Git Lyra sample remains source-only and is intentionally rejected by
@@ -80,21 +91,27 @@ reference for the full acceptance lane encoded in
 [`Validation/Run-UEP58LyraValidation.ps1`](Validation/Run-UEP58LyraValidation.ps1).
 Its `All` mode stages an isolated copy, then runs Standalone, explicitly
 synchronized dedicated-server/client, cook/package and packaged-runtime checks.
+The latest full package evidence is result `20260812-234501`. The subsequent
+unambiguous-target hardening is covered by exact-source Network result
+`20260813-005436` and Standalone result `20260813-005835`; no package was
+rebuilt after that small change.
 
-### Known 0.4.0 boundaries
+### Known 0.5.0 boundaries
 
 Release-level runtime validation remains Win64-only. The local UE5.8 install
 reports that the Linux `v26_clang-20.1.8-rockylinux8` SDK is unavailable, so
 Linux is not represented as tested. Dynamic generated classes require a process
 restart for redefinition, UObject access remains game-thread-only, and the Third
 Person parity contract covers keyboard/mouse rather than the template's mobile
-touch UI. The Lyra bridge is observational: Lyra continues to own feature
-activation, abilities, input mappings and replicated authority-sensitive state.
+touch UI. Lyra continues to own feature activation, ability grants, input
+mappings, damage execution and replication. The only 0.5 write surface is a
+bounded, non-lethal authority health delta; it does not provide a generic client
+RPC, raw attribute setter or arbitrary Gameplay Effect launcher.
 
 To use this source release, place the plugin under a UE 5.8 project's `Plugins`
 directory, regenerate project files, and build it with that UE 5.8 installation.
 The remainder of this README is preserved upstream documentation and may
-describe legacy UE4 or external-Python behavior outside the 0.4.0 support
+describe legacy UE4 or external-Python behavior outside the 0.5.0 support
 contract above.
 
 ## Original upstream documentation
