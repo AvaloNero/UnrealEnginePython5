@@ -47,6 +47,10 @@ UE4 project history remains available in Git.
   packages from opening the TCP 1985 control listener or repeatedly acquiring a
   new Windows Firewall application identity; the Engine source and shared
   UnrealEditor target remain unchanged.
+- Demo history and working files now live in
+  `AvaloNero/UnrealEnginePython5Examples`; this repository pins that public
+  repository as the `Demos` submodule instead of duplicating the projects in the
+  plugin source tree.
 
 ### Validation
 

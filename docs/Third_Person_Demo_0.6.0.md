@@ -12,6 +12,11 @@ The demo is staged into `.build/Demos/UEPPythonThirdPerson`. It does not edit th
 engine template or Unreal Engine source. The runtime uses the engine-bundled
 CPython 3.11.
 
+The canonical sample history and working tree are published in
+[`UnrealEnginePython5Examples`](https://github.com/AvaloNero/UnrealEnginePython5Examples).
+This repository pins that project as `Demos`; after a non-recursive clone, run
+`git submodule update --init Demos` before using the commands below.
+
 ## Runtime layout
 
 Runtime and automation no longer share one large module:

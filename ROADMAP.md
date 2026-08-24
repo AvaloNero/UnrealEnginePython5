@@ -166,7 +166,8 @@ release-promotion gate.
 
 Status: completed and released on 2026-08-24. Lightweight checks, the headless
 UE 5.8 Standalone contract, Blueprint audit, packaged runtime contract and
-visible-client gate pass.
+visible-client gate pass. The completed demo history was then moved to
+`AvaloNero/UnrealEnginePython5Examples` and pinned here as the `Demos` submodule.
 
 - Replace the former 543-line combined runtime/smoke module with a package that
   separates generated gameplay classes, animation, game state, visible actors,

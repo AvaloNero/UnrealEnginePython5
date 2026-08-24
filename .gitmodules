@@ -1,0 +1,4 @@
+[submodule "Demos"]
+	path = Demos
+	url = https://github.com/AvaloNero/UnrealEnginePython5Examples.git
+	branch = main

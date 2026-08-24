@@ -64,7 +64,11 @@ The release baseline includes:
 
 The repeatable acceptance project and one-command build/test/package workflow
 are documented in [`Validation/README.md`](Validation/README.md). The sample is
-documented in [`Demos/README.md`](Demos/README.md). See
+maintained with its original release history in
+[`UnrealEnginePython5Examples`](https://github.com/AvaloNero/UnrealEnginePython5Examples)
+and pinned here as the `Demos` submodule. Clone with `--recurse-submodules`, or
+run `git submodule update --init Demos` before following
+[`Demos/README.md`](Demos/README.md). See
 [`docs/Subclassing_API.md`](docs/Subclassing_API.md) and
 [`docs/EnhancedInput_API.md`](docs/EnhancedInput_API.md) for the UE 5.8 gameplay
 APIs. See
