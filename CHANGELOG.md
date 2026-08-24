@@ -3,6 +3,74 @@
 This file records the UE5 port maintained in this repository. The historical
 UE4 project history remains available in Git.
 
+## [0.6.0] - 2026-08-24
+
+### Added
+
+- A modular `uep_third_person` runtime package separating generated Character,
+  PlayerController and GameMode types from animation, collectible gameplay,
+  viewport HUD, world lifecycle and opt-in smoke automation.
+- A six-pickup playable round with cumulative score, a completion countdown,
+  repeated rounds and a Python-driven companion actor.
+- A hit-test-invisible Slate HUD attached directly to the game viewport. Python
+  updates the objective, score, timer, speed and locomotion state without using
+  on-screen debug messages or a gameplay Blueprint.
+- Host-side tests for the Unreal-independent scoring and round-transition state.
+- Runtime access to `get_discovered_plugins()`, `get_enabled_plugins()`,
+  `find_plugin()` and `unreal_engine.IPlugin`, allowing packaged processes to
+  inspect the descriptor of the plugin they actually loaded.
+
+### Changed
+
+- `PythonFirst` is now the demo driver's default variant; the 0.1.0 Blueprint
+  overlay remains available explicitly as `-Variant Overlay`.
+- `uep_python_third_person.py` is now a compatibility import. Normal startup
+  loads `uep_third_person.bootstrap`, while smoke automation starts only when
+  its result command-line argument is present.
+- The Third Person smoke contract now collects the real spawned round, verifies
+  HUD construction/update, performs same-map travel, validates a fresh session
+  and explicitly checks HUD/input/runtime teardown.
+- The input gate now sends `W`, `MouseX`/`MouseY` and `SpaceBar` through
+  PlayerInput and the official mapping contexts instead of injecting InputAction
+  values directly.
+- Shared template packs now preserve their declared `Input`, `Characters` and
+  `LevelPrototyping` mount roots. Incremental staging rejects legacy flattened
+  assets so Python and the mapping contexts cannot silently load different
+  InputAction objects.
+- Package builds invoke the Game target directly with `-NoUBA`, then run UAT with
+  `-skipbuild`; packaged smoke launches the inner target executable instead of
+  the short-lived archive bootstrapper.
+- The demo descriptor disables the unavailable local `PlatformCrypto` program
+  plugin for packaging, and the driver now rejects fatal, assertion, unhandled
+  exception and `Log*: Error` diagnostics from both UAT and runtime logs.
+- The demo Game target disables Unreal Trace, preventing timestamped Development
+  packages from opening the TCP 1985 control listener or repeatedly acquiring a
+  new Windows Firewall application identity; the Engine source and shared
+  UnrealEditor target remain unchanged.
+
+### Validation
+
+- UE 5.8's bundled CPython 3.11.8 passes all four pure round-state tests, all 16
+  staged Python files parse, the PowerShell driver parses and `git diff --check`
+  reports no whitespace errors.
+- Headless UE 5.8 Standalone result `20260824-211718` passes the schema-5
+  contract through mapped `W`, `MouseX`/`MouseY` and `SpaceBar` input: 313.91
+  units of movement, 28 degrees of look, 127.551 units of jump displacement,
+  all animation states, 6/6 pickups, HUD, companion, travel and explicit
+  HUD/input/runtime teardown with every key released.
+- UE 5.8 Blueprint audit result `20260824-211829` passes with the retained
+  reference baseline of four Blueprints, 27 graphs and 173 nodes.
+- Win64 package result `20260824-203312` records `Build=False` in UAT after the
+  explicit `-NoUBA` Game build, archives 1754 Pak entries and passes the same
+  schema-5 contract inside the packaged executable. Strict UAT and runtime
+  diagnostic scans both report zero release-blocking entries; the executable
+  SHA-256 is `04A9CF37D82F31B6A9D6255E99841FD3D2BEEEE30BAB797F83D11C6C2F8272FD`.
+- Visible 1280x720 Play result `20260824-044028` renders the Python HUD and
+  gameplay, accepts physical mouse look and SpaceBar jump, and completes the
+  jump/fall/land animation sequence. The final trace-disabled package was then
+  relaunched with zero TCP listeners and no Windows Security picker; no firewall
+  permission was broadened.
+
 ## [0.5.0] - 2026-08-13
 
 ### Added

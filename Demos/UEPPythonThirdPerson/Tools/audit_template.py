@@ -28,7 +28,7 @@ BLUEPRINTS = (
     ),
     (
         "animation",
-        "/Game/Mannequins/Anims/Unarmed/ABP_Unarmed",
+        "/Game/Characters/Mannequins/Anims/Unarmed/ABP_Unarmed",
         "Python locomotion state selector plus retained animation assets",
     ),
 )

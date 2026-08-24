@@ -1,32 +1,31 @@
-The Plugin API
-=
+# Plugin API
 
-This API allows access to the Unreal Engine 4 plugin system (IPluginManager, and IPlugin interfaces)
+This API exposes Unreal Engine's `IPluginManager` and `IPlugin` interfaces.
+Starting with UEP 0.6.0, discovery and descriptor reads are available in both
+Editor and packaged runtime processes.
 
-Discovering/Listing/Referencing plugins
--
+## Discovering, listing and referencing plugins
 
 ```python
-import unreal_engine
+import unreal_engine as ue
 
 # get the list of all discovered plugins
-plugins_list = unreal_engine.get_discovered_plugins()
+plugins_list = ue.get_discovered_plugins()
 
 # get the list of enabled plugins
-plugins_list = unreal_engine.get_enabled_plugins()
+plugins_list = ue.get_enabled_plugins()
 
 # name is the string name of the plugin (like 'UnrealEnginePython' or 'Paper2D')
-plugin = unreal_engine.find_plugin(name)
+plugin = ue.find_plugin(name)
 ```
 
-The unreal_engine.IPlugin class represents a plugin
+`find_plugin()` returns an `unreal_engine.IPlugin`, or `None` when the plugin is
+not known to the current process.
 
-
-IPlugin methods
--
+## IPlugin methods
 
 ```python
-import unreal_engine
+import unreal_engine as ue
 
 paper2d = ue.find_plugin('Paper2D')
 
@@ -46,8 +45,7 @@ can_contain_content = paper2d.can_contain_content()
 is_enabled = paper2d.is_enabled()
 ```
 
-Managing the descriptor
--
+## Managing the descriptor
 
 You can load/write a json string from/to the plugin descriptor
 
@@ -61,8 +59,7 @@ json = paper2d.to_json(True)
 paper2d.from_json(json_blob, True)
 ```
 
-IPlugin properties (read only)
--
+## IPlugin properties (read only)
 
 ```python
 .category

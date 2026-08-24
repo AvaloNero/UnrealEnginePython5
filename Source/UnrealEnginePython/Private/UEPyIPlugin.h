@@ -2,10 +2,6 @@
 
 #include "UEPyModule.h"
 
-#if WITH_EDITOR
-
-
-
 #include "Runtime/Projects/Public/Interfaces/IPluginManager.h"
 
 typedef struct
@@ -18,4 +14,7 @@ typedef struct
 PyObject *py_ue_new_iplugin(IPlugin *);
 
 void ue_python_init_iplugin(PyObject *);
-#endif
+
+PyObject *py_unreal_engine_get_discovered_plugins(PyObject *, PyObject *);
+PyObject *py_unreal_engine_get_enabled_plugins(PyObject *, PyObject *);
+PyObject *py_unreal_engine_find_plugin(PyObject *, PyObject *);

@@ -11,6 +11,7 @@ import unreal_engine as ue
 
 ue.log("UEP_PYTHON_THIRD_PERSON_SCRIPT_LOADED")
 
-# Importing the module creates the transient gameplay UClasses and retains the
-# process-wide smoke/runtime ticker across map travel.
-import uep_python_third_person  # noqa: E402,F401
+# Importing the bootstrap creates the transient gameplay UClasses and starts a
+# process-wide playable runtime. The automated smoke ticker is added only when
+# its explicit command-line result argument is present.
+from uep_third_person import bootstrap  # noqa: E402,F401

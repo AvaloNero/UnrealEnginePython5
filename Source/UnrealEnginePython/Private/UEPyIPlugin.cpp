@@ -1,9 +1,58 @@
 #include "UEPyIPlugin.h"
 
-#if WITH_EDITOR
-
-
 #include "Runtime/Projects/Public/Interfaces/IPluginManager.h"
+
+PyObject *py_unreal_engine_get_discovered_plugins(PyObject *self, PyObject *args)
+{
+	PyObject *plugins_list = PyList_New(0);
+
+	for (TSharedRef<IPlugin> plugin : IPluginManager::Get().GetDiscoveredPlugins())
+	{
+		PyObject *ret = py_ue_new_iplugin(&plugin.Get());
+		if (ret)
+		{
+			PyList_Append(plugins_list, ret);
+			Py_DECREF(ret);
+		}
+	}
+
+	return plugins_list;
+}
+
+PyObject *py_unreal_engine_get_enabled_plugins(PyObject *self, PyObject *args)
+{
+	PyObject *plugins_list = PyList_New(0);
+
+	for (TSharedRef<IPlugin> plugin : IPluginManager::Get().GetEnabledPlugins())
+	{
+		PyObject *ret = py_ue_new_iplugin(&plugin.Get());
+		if (ret)
+		{
+			PyList_Append(plugins_list, ret);
+			Py_DECREF(ret);
+		}
+	}
+
+	return plugins_list;
+}
+
+PyObject *py_unreal_engine_find_plugin(PyObject *self, PyObject *args)
+{
+	char *name;
+
+	if (!PyArg_ParseTuple(args, "s:find_plugin", &name))
+	{
+		return NULL;
+	}
+
+	TSharedPtr<IPlugin> plugin = IPluginManager::Get().FindPlugin(FString(UTF8_TO_TCHAR(name)));
+	if (!plugin.IsValid())
+	{
+		Py_RETURN_NONE;
+	}
+
+	return py_ue_new_iplugin(plugin.Get());
+}
 
 static PyObject *py_ue_iplugin_get_name(ue_PyIPlugin *self, PyObject * args)
 {
@@ -298,7 +347,7 @@ static PyTypeObject ue_PyIPluginType = {
 	0,                         /* tp_setattro */
 	0,                         /* tp_as_buffer */
 	Py_TPFLAGS_DEFAULT,        /* tp_flags */
-	"Unreal Engine Editor IPlugin",           /* tp_doc */
+	"Unreal Engine IPlugin",           /* tp_doc */
 	0,                         /* tp_traverse */
 	0,                         /* tp_clear */
 	0,                         /* tp_richcompare */
@@ -328,4 +377,3 @@ PyObject *py_ue_new_iplugin(IPlugin *plugin)
 	ret->plugin = plugin;
 	return (PyObject *)ret;
 }
-#endif

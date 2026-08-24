@@ -151,4 +151,6 @@ See `Lifecycle_Threading_API.md` for the complete interpreter, callback,
 exception and worker-thread contract.
 
 See the complete Python-first character, controller and GameMode implementation
-in `Demos/UEPPythonThirdPerson/Overlay/Content/Scripts/uep_python_third_person.py`.
+under
+`Demos/UEPPythonThirdPerson/Overlay/Content/Scripts/uep_third_person`. The old
+`uep_python_third_person.py` path remains a compatibility import.

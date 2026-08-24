@@ -33,10 +33,6 @@ PyObject *py_unreal_engine_console_exec(PyObject *, PyObject * args);
 
 PyObject *py_unreal_engine_editor_tick(PyObject *, PyObject *);
 
-PyObject *py_unreal_engine_get_discovered_plugins(PyObject *, PyObject *);
-PyObject *py_unreal_engine_get_enabled_plugins(PyObject *, PyObject *);
-PyObject *py_unreal_engine_find_plugin(PyObject *, PyObject *);
-
 PyObject *py_unreal_engine_rename_asset(PyObject *, PyObject *);
 PyObject *py_unreal_engine_duplicate_asset(PyObject *, PyObject *);
 PyObject *py_unreal_engine_delete_asset(PyObject *, PyObject *);

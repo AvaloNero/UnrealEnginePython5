@@ -3,18 +3,24 @@
 
 ## Unreal Engine 5.8 port
 
-**Current version: 0.5.0**
+**Current version: 0.6.0**
 
-Version 0.5.0 adds the first genuinely Python-driven Lyra gameplay slice to the
-hardened UE5 runtime binding, Python-first Third Person demo and 0.4 observation
-bridge. It targets **Unreal
+Version 0.6.0 completes the Python-first Third Person vertical slice: generated
+Python Character, PlayerController and GameMode classes drive camera, real
+Enhanced Input, animation state, collectible rounds, a companion and a
+Python-owned Slate viewport HUD. Host tests, headless Standalone, Blueprint
+audit, Win64 package/runtime and visible-client gates pass on UE 5.8. See
+[`docs/Third_Person_Demo_0.6.0.md`](docs/Third_Person_Demo_0.6.0.md).
+
+The release retains the genuinely Python-driven Lyra gameplay slice introduced
+in 0.5.0 and the hardened UE5 runtime binding beneath both examples. It targets **Unreal
 Engine 5.8**, uses the engine-bundled **CPython 3.11** through UnrealBuildTool's
 `Python3` module, and does not require changes to Unreal Engine source code.
 Windows/Win64 remains the release-validated platform; a Linux lane is provided
 but is not a support claim until it produces a green UE5.8 build/runtime
 artifact.
 
-### 0.5.0 support contract
+### 0.6.0 support contract
 
 The release baseline includes:
 
@@ -96,7 +102,7 @@ unambiguous-target hardening is covered by exact-source Network result
 `20260813-005436` and Standalone result `20260813-005835`; no package was
 rebuilt after that small change.
 
-### Known 0.5.0 boundaries
+### Known 0.6.0 boundaries
 
 Release-level runtime validation remains Win64-only. The local UE5.8 install
 reports that the Linux `v26_clang-20.1.8-rockylinux8` SDK is unavailable, so
@@ -104,14 +110,14 @@ Linux is not represented as tested. Dynamic generated classes require a process
 restart for redefinition, UObject access remains game-thread-only, and the Third
 Person parity contract covers keyboard/mouse rather than the template's mobile
 touch UI. Lyra continues to own feature activation, ability grants, input
-mappings, damage execution and replication. The only 0.5 write surface is a
+mappings, damage execution and replication. The Lyra 0.5.0 write surface remains a
 bounded, non-lethal authority health delta; it does not provide a generic client
 RPC, raw attribute setter or arbitrary Gameplay Effect launcher.
 
 To use this source release, place the plugin under a UE 5.8 project's `Plugins`
 directory, regenerate project files, and build it with that UE 5.8 installation.
 The remainder of this README is preserved upstream documentation and may
-describe legacy UE4 or external-Python behavior outside the 0.5.0 support
+describe legacy UE4 or external-Python behavior outside the 0.6.0 support
 contract above.
 
 ## Original upstream documentation

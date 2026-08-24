@@ -81,6 +81,8 @@ controller.inject_enhanced_input_for_action(IA_MOVE, FVector2D(0.0, 1.0))
 against the action's configured value type. It requires a local Enhanced Input
 subsystem and must be called on Unreal's game thread.
 
-See `Demos/UEPPythonThirdPerson/Overlay/Content/Scripts/uep_python_third_person.py`
-for mapping, binding, movement, look and jump together in a packaged-capable
-example.
+See
+`Demos/UEPPythonThirdPerson/Overlay/Content/Scripts/uep_third_person/character.py`
+and `controller.py` for mapping ownership, failure-safe binding, movement, look
+and jump together in a packaged-capable example. The old
+`uep_python_third_person.py` path remains a compatibility import.

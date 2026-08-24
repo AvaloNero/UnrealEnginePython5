@@ -87,6 +87,8 @@
 
 #include "UEPyUScriptStruct.h"
 
+#include "UEPyIPlugin.h"
+
 #if WITH_EDITOR
 #include "Wrappers/UEPyFSlowTask.h"
 #include "Wrappers/UEPyFAssetData.h"
@@ -96,7 +98,6 @@
 
 #include "UObject/UEPyAnimSequence.h"
 #include "Blueprint/UEPyEdGraphPin.h"
-#include "UEPyIPlugin.h"
 #include "CollectionManager/UEPyICollectionManager.h"
 #include "MaterialEditorUtilities/UEPyFMaterialEditorUtilities.h"
 #endif
@@ -277,6 +278,11 @@ static PyMethodDef unreal_engine_methods[] = {
 	{ "unload_package", py_unreal_engine_unload_package, METH_VARARGS, "" },
 	{ "get_package_filename", py_unreal_engine_get_package_filename, METH_VARARGS, "" },
 #endif
+
+	{ "get_discovered_plugins", py_unreal_engine_get_discovered_plugins, METH_VARARGS, "" },
+	{ "get_enabled_plugins", py_unreal_engine_get_enabled_plugins, METH_VARARGS, "" },
+	{ "find_plugin", py_unreal_engine_find_plugin, METH_VARARGS, "" },
+
 	{ "get_forward_vector", py_unreal_engine_get_forward_vector, METH_VARARGS, "" },
 	{ "get_up_vector", py_unreal_engine_get_up_vector, METH_VARARGS, "" },
 	{ "get_right_vector", py_unreal_engine_get_right_vector, METH_VARARGS, "" },
@@ -382,10 +388,6 @@ static PyMethodDef unreal_engine_methods[] = {
 	{ "editor_command_save_all_levels", py_unreal_engine_editor_command_save_all_levels, METH_VARARGS, "" },
 
 	{ "editor_save_all", py_unreal_engine_editor_save_all, METH_VARARGS, "" },
-
-	{ "get_discovered_plugins", py_unreal_engine_get_discovered_plugins, METH_VARARGS, "" },
-	{ "get_enabled_plugins", py_unreal_engine_get_enabled_plugins, METH_VARARGS, "" },
-	{ "find_plugin", py_unreal_engine_find_plugin, METH_VARARGS, "" },
 
 	{ "string_to_guid", py_unreal_engine_string_to_guid, METH_VARARGS, "" },
 	{ "new_guid", py_unreal_engine_new_guid, METH_VARARGS, "" },
@@ -1724,8 +1726,8 @@ void unreal_engine_init_py_module()
 #if UEP_LEGACY_ENGINE_MINOR_VERSION > 13
 	ue_python_init_fraw_mesh(new_unreal_engine_module);
 #endif
-	ue_python_init_iplugin(new_unreal_engine_module);
 #endif
+	ue_python_init_iplugin(new_unreal_engine_module);
 
 	ue_python_init_slate(new_unreal_engine_module);
 

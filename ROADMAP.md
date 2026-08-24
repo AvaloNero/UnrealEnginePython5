@@ -161,3 +161,85 @@ human targets, exact-source results `20260813-005436` (Network) and
 `20260813-005835` (Standalone) passed without another Cook/package. A final
 package confirmation for that exact source is intentionally left as the only
 release-promotion gate.
+
+## 0.6.0 — Playable Python-first Third Person
+
+Status: completed and released on 2026-08-24. Lightweight checks, the headless
+UE 5.8 Standalone contract, Blueprint audit, packaged runtime contract and
+visible-client gate pass.
+
+- Replace the former 543-line combined runtime/smoke module with a package that
+  separates generated gameplay classes, animation, game state, visible actors,
+  viewport HUD, world lifecycle and automation.
+- Turn the template-parity proof into a complete small round: six collectible
+  orbs, cumulative score, timer, completion state, automatic next round and a
+  Python-driven companion.
+- Replace per-frame debug HUD text with one real hit-test-invisible Slate tree
+  owned by the current game-world session.
+- Make PythonFirst the default demo while retaining the original Blueprint
+  overlay only as an explicit compatibility regression.
+- Keep the official UE 5.8 map, mesh, animation and input assets unchanged and
+  keep the empty project C++ module free of gameplay.
+
+Acceptance gate: UE-bundled CPython 3.11 passes the pure state tests; the
+Blueprint audit remains stable; headless Standalone proves generated classes,
+five input bindings, movement/look/jump, the four animation states, all six
+pickups, score/victory, companion motion, HUD attach/update, same-map travel and
+explicit teardown; a visible 1280x720 run is playable; and the same contract
+passes in a Win64 package with strict clean logs.
+
+Current evidence: headless Standalone result `20260824-211718` passes the full
+schema-5 runtime/teardown contract with UE 5.8.0, CPython 3.11.8 and the loaded
+UEP 0.6.0 descriptor. It delivers `W`, `MouseX`/`MouseY` and `SpaceBar` through
+the official mapping contexts and records movement, look, jump and all released
+keys. Blueprint audit result `20260824-211829` retains the expected four
+Blueprints, 27 graphs and 173 nodes. Win64 package result `20260824-203312`
+records UAT `Build=False`, archives 1754 Pak entries and passes the same schema-5
+contract from the inner packaged target with zero release-blocking UAT/runtime
+diagnostics. Visible Play result `20260824-044028` confirms the rendered Python
+HUD, physical mouse look and the SpaceBar jump/fall/land sequence; the final
+trace-disabled package relaunches with zero TCP listeners and no Windows
+Security picker.
+
+## 0.7.0 — Lyra Python HUD foundation
+
+Status: planned after 0.6.0 acceptance.
+
+- Reuse the proven HUD/session lifecycle while preserving Lyra's `ALyraHUD`,
+  Game Feature activation and CommonUI ownership.
+- Replace the visible health-bar behavior with a Python presenter bound to
+  Lyra's Health Component events.
+- Prove replicated `100 -> 90 -> 100`, respawn, travel, deactivation and zero
+  dedicated-server widget creation.
+
+## 0.8.0 — Lyra combat and match HUD
+
+Status: planned.
+
+- Add Python-driven QuickBar, weapon/ammo, reticle, team score, elimination feed
+  and accolade presentation over Lyra's native replicated gameplay state.
+- Introduce a bounded reusable Gameplay Message subscription surface so HUD
+  behavior is event-driven rather than tick-polled.
+- Keep inventory, equipment, GAS, scoring authority and replication native.
+
+## 0.9.0 — API freeze and production hardening
+
+Status: planned.
+
+- Extract reusable UI/lifecycle/message functionality from demo-specific code
+  without introducing a Lyra dependency into the core binding.
+- Freeze the supported Python API, document deprecation rules and stress GC,
+  callback release, respawn, travel, feature activation and interpreter exit.
+- Run the complete generic, Third Person and Lyra regression matrices before
+  accepting only release fixes.
+
+## 1.0.0 — Stable UE 5.8 runtime binding
+
+Status: planned.
+
+- Publish the exact Win64/UE5.8/CPython 3.11 support contract, migration guide,
+  deterministic source archive, optional exact-engine binary and checksums.
+- Require exact-commit generic and Lyra BuildCookRun/package evidence, visible
+  demo evidence, strict clean logs and unchanged Engine/reference-project trees.
+- Preserve API compatibility throughout 1.x; additional platforms become
+  supported only after their own retained green build and runtime artifacts.

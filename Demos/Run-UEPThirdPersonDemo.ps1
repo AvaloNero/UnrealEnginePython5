@@ -1,8 +1,9 @@
 [CmdletBinding()]
 param(
     [string]$EngineRoot = "F:\UnrealEngine",
+    [string]$PluginRoot = "",
     [ValidateSet("Overlay", "PythonFirst")]
-    [string]$Variant = "Overlay",
+    [string]$Variant = "PythonFirst",
     [ValidateSet("Prepare", "Audit", "Smoke", "Package", "Play", "Editor")]
     [string]$Mode = "Prepare",
     [ValidateRange(1, 64)]
@@ -47,6 +48,30 @@ function Copy-DirectoryContents {
     Get-ChildItem -LiteralPath $Source -Force | ForEach-Object {
         Copy-Item -LiteralPath $_.FullName -Destination $Destination -Recurse -Force
     }
+}
+
+function Copy-FileIfChanged {
+    param(
+        [Parameter(Mandatory = $true)][string]$Source,
+        [Parameter(Mandatory = $true)][string]$Destination
+    )
+
+    $destinationParent = Split-Path -Parent $Destination
+    New-Item -ItemType Directory -Path $destinationParent -Force | Out-Null
+    if (Test-Path -LiteralPath $Destination -PathType Leaf) {
+        $sourceItem = Get-Item -LiteralPath $Source
+        $destinationItem = Get-Item -LiteralPath $Destination
+        if ($sourceItem.Length -eq $destinationItem.Length) {
+            $sourceHash = (Get-FileHash -LiteralPath $Source -Algorithm SHA256).Hash
+            $destinationHash = (
+                Get-FileHash -LiteralPath $Destination -Algorithm SHA256
+            ).Hash
+            if ($sourceHash -eq $destinationHash) {
+                return
+            }
+        }
+    }
+    Copy-Item -LiteralPath $Source -Destination $Destination -Force
 }
 
 function Format-ProcessCommand {
@@ -116,6 +141,14 @@ function Assert-AutomationLog {
             throw "AutomationTool log does not contain '$marker': $LogPath"
         }
     }
+    $diagnostics = @([regex]::Matches(
+        $contents,
+        "(?im)Fatal error:|Assertion failed:|Unhandled Exception:|^.*Log[A-Za-z0-9_]+:\s+Error:.*$"
+    ))
+    if ($diagnostics.Count -gt 0) {
+        $preview = @($diagnostics | Select-Object -First 5 | ForEach-Object { $_.Value }) -join "`n"
+        throw "AutomationTool log contains $($diagnostics.Count) fatal/assert/error diagnostic(s): $LogPath`n$preview"
+    }
 }
 
 function Assert-BuildLog {
@@ -137,7 +170,112 @@ function Assert-BuildLog {
     }
 }
 
-$repoRoot = Get-FullPath (Join-Path $PSScriptRoot "..")
+function Assert-CleanRuntimeLog {
+    param([Parameter(Mandatory = $true)][string]$LogPath)
+
+    if (!(Test-Path -LiteralPath $LogPath -PathType Leaf)) {
+        throw "Runtime log was not created: $LogPath"
+    }
+    $contents = Get-Content -LiteralPath $LogPath -Raw
+    $diagnostics = @([regex]::Matches(
+        $contents,
+        "(?im)Fatal error:|Assertion failed:|Unhandled Exception:|LogWindows:\s+Error:|^.*Log[A-Za-z0-9_]+:\s+Error:.*$"
+    ))
+    if ($diagnostics.Count -gt 0) {
+        $preview = @($diagnostics | Select-Object -First 5 | ForEach-Object { $_.Value }) -join "`n"
+        throw "Runtime log contains $($diagnostics.Count) fatal/assert/error diagnostic(s): $LogPath`n$preview"
+    }
+}
+
+function Assert-PythonFirstReport {
+    param(
+        [Parameter(Mandatory = $true)][psobject]$Report,
+        [Parameter(Mandatory = $true)][string]$ResultPath,
+        [Parameter(Mandatory = $true)][string]$Label
+    )
+
+    if ($Report.schema_version -ne 5 -or
+        $Report.status -ne "passed" -or
+        @($Report.engine_version).Count -ne 3 -or
+        $Report.engine_version[0] -ne 5 -or
+        $Report.engine_version[1] -ne 8 -or
+        $Report.python_version -notlike "3.11.*" -or
+        $Report.uep_version -ne "0.6.0" -or
+        $Report.demo_version -ne "0.6.0" -or
+        $Report.game_mode_class -ne "UEPThirdPersonGameMode" -or
+        $Report.controller_class -ne "UEPThirdPersonPlayerController" -or
+        $Report.character_class -ne "UEPThirdPersonCharacter" -or
+        !$Report.mapping_contexts.default -or
+        !$Report.mapping_contexts.mouse_look -or
+        $Report.input_binding_count -ne 5 -or
+        $Report.movement_distance -le 25.0 -or
+        $Report.look_delta -le 0.1 -or
+        !$Report.jump_observed -or
+        $Report.input_events.jump_started -le 0 -or
+        $Report.input_events.jump_completed -le 0 -or
+        $Report.input_events.source -ne "enhanced_input_mapped_keys" -or
+        $Report.input_delivery.mode -ne "enhanced_input_mapped_keys" -or
+        $Report.input_delivery.move_key -ne "W" -or
+        $Report.input_delivery.look_key -ne "Mouse2D" -or
+        @($Report.input_delivery.look_axes).Count -ne 2 -or
+        $Report.input_delivery.look_axes[0] -ne "MouseX" -or
+        $Report.input_delivery.look_axes[1] -ne "MouseY" -or
+        $Report.input_delivery.jump_key -ne "SpaceBar" -or
+        @($Report.input_delivery.events).Count -ne 4 -or
+        $Report.input_delivery.axis_samples -le 0 -or
+        !$Report.input_delivery.all_keys_released -or
+        @($Report.animation_states_observed).Count -lt 4 -or
+        @($Report.animation_states_observed | Where-Object { $_ -in @("locomotion", "jump", "fall", "land") } | Sort-Object -Unique).Count -ne 4 -or
+        !$Report.camera_boom_valid -or
+        !$Report.follow_camera_valid -or
+        $Report.python_tick_count -le 0 -or
+        $Report.map_travel_count -ne 1 -or
+        $Report.runtime_session_generation -lt 2 -or
+        $Report.gameplay.progress.phase -ne "victory" -or
+        $Report.gameplay.progress.round_score -ne 6 -or
+        $Report.gameplay.progress.total_score -ne 6 -or
+        $Report.gameplay.remaining_pickups -ne 0 -or
+        !$Report.gameplay.companion_valid -or
+        $Report.gameplay.companion_movement -le 1.0 -or
+        !$Report.gameplay.hud.attached -or
+        $Report.gameplay.hud.update_count -le 0 -or
+        $Report.post_travel.generation -lt 2 -or
+        $Report.post_travel.progress.round_score -ne 0 -or
+        $Report.post_travel.remaining_pickups -ne 6 -or
+        !$Report.post_travel.hud.attached -or
+        $Report.teardown.runtime_active -ne $false -or
+        !$Report.teardown.session_released -or
+        !$Report.teardown.hud_detached -or
+        !$Report.teardown.input_bindings_removed -or
+        !$Report.teardown.mapping_contexts_removed) {
+        throw "Python-first demo $Label report failed its contract: $ResultPath"
+    }
+}
+
+$embeddedPluginRoot = Get-FullPath (Join-Path $PSScriptRoot "..")
+$isEmbeddedInPlugin = Test-Path -LiteralPath (
+    Join-Path $embeddedPluginRoot "UnrealEnginePython.uplugin"
+) -PathType Leaf
+if ($PluginRoot) {
+    $repoRoot = Get-FullPath $PluginRoot
+}
+elseif ($isEmbeddedInPlugin) {
+    $repoRoot = $embeddedPluginRoot
+}
+else {
+    $siblingPluginRoot = Get-FullPath (
+        Join-Path $PSScriptRoot "..\UnrealEnginePython5"
+    )
+    if (Test-Path -LiteralPath (
+        Join-Path $siblingPluginRoot "UnrealEnginePython.uplugin"
+    ) -PathType Leaf) {
+        $repoRoot = $siblingPluginRoot
+    }
+    else {
+        throw "UnrealEnginePython5 was not found. Pass -PluginRoot <path>."
+    }
+}
+$demoWorkspaceRoot = if ($isEmbeddedInPlugin) { $embeddedPluginRoot } else { $PSScriptRoot }
 $engineRootPath = Get-FullPath $EngineRoot
 $engineVersionPath = Join-Path $engineRootPath "Engine\Build\Build.version"
 $templateRoot = Join-Path $engineRootPath "Templates\TP_ThirdPersonBP"
@@ -145,12 +283,15 @@ $templateResourcesRoot = Join-Path $engineRootPath "Templates\TemplateResources\
 $demoName = if ($Variant -eq "PythonFirst") { "UEPPythonThirdPerson" } else { "UEPThirdPersonDemo" }
 $projectFileName = "$demoName.uproject"
 $overlayRoot = Join-Path $PSScriptRoot "$demoName\Overlay"
-$demoBuildRoot = Join-Path $repoRoot ".build\Demos"
+$demoBuildRoot = Join-Path $demoWorkspaceRoot ".build\Demos"
 $stageRoot = Join-Path $demoBuildRoot $demoName
 $stageMarker = Join-Path $stageRoot ".uep-demo-stage"
 $projectPath = Join-Path $stageRoot $projectFileName
 $pluginStage = Join-Path $stageRoot "Plugins\UnrealEnginePython"
 $pluginDescriptor = Join-Path $pluginStage "UnrealEnginePython.uplugin"
+$disabledNetworkPlugins = "AndroidFileServer,UdpMessaging,TcpMessaging"
+$disableNetworkPluginsArgument = "-DisablePlugins=$disabledNetworkPlugins"
+$disableTraceServerArgument = "-notraceserver"
 $runId = Get-Date -Format "yyyyMMdd-HHmmss"
 $resultRoot = Join-Path $demoBuildRoot "Results\$runId"
 
@@ -210,11 +351,64 @@ try {
 
     if ($needsTemplateCopy) {
         New-Item -ItemType Directory -Path $stageRoot -Force | Out-Null
+
+        $legacySharedContent = @(
+            "Actions",
+            "Touch",
+            "Mannequins",
+            "Interactable",
+            "Materials",
+            "Meshes",
+            "Textures",
+            "IMC_Default.uasset",
+            "IMC_MouseLook.uasset"
+        )
+        $legacyMountDetected =
+            (Test-Path -LiteralPath (Join-Path $stageRoot "Content\IMC_Default.uasset")) -or
+            (Test-Path -LiteralPath (Join-Path $stageRoot "Content\Mannequins"))
+        if ($legacyMountDetected) {
+            foreach ($relativePath in $legacySharedContent) {
+                $legacyPath = Join-Path $stageRoot "Content\$relativePath"
+                Assert-PathIsUnder -Path $legacyPath -Parent $stageRoot
+                if (Test-Path -LiteralPath $legacyPath) {
+                    Remove-Item -LiteralPath $legacyPath -Recurse -Force
+                }
+            }
+        }
+
         Copy-DirectoryContents (Join-Path $templateRoot "Config") (Join-Path $stageRoot "Config")
         Copy-DirectoryContents (Join-Path $templateRoot "Content") (Join-Path $stageRoot "Content")
         foreach ($resourceName in @("Characters", "Input", "LevelPrototyping")) {
             $resourceContent = Join-Path $templateResourcesRoot "$resourceName\Content"
-            Copy-DirectoryContents $resourceContent (Join-Path $stageRoot "Content")
+            # Shared template packs are mounted below Content by the MountName
+            # declared in TemplateDefs.ini. Preserve that layout so object paths
+            # embedded in the assets (for example /Game/Input/Actions/IA_Move)
+            # resolve to the same objects that the Python bindings load.
+            Copy-DirectoryContents `
+                $resourceContent `
+                (Join-Path $stageRoot "Content\$resourceName")
+        }
+    }
+
+    foreach ($requiredTemplateAsset in @(
+        "Content\Input\Actions\IA_Move.uasset",
+        "Content\Input\IMC_Default.uasset",
+        "Content\Characters\Mannequins\Meshes\SKM_Manny_Simple.uasset",
+        "Content\LevelPrototyping\Meshes\SM_ChamferCube.uasset"
+    )) {
+        $requiredTemplatePath = Join-Path $stageRoot $requiredTemplateAsset
+        if (!(Test-Path -LiteralPath $requiredTemplatePath -PathType Leaf)) {
+            throw "Mounted template asset was not staged: $requiredTemplatePath"
+        }
+    }
+    foreach ($legacyTemplateAsset in @(
+        "Content\Actions\IA_Move.uasset",
+        "Content\IMC_Default.uasset",
+        "Content\Mannequins\Meshes\SKM_Manny_Simple.uasset"
+    )) {
+        $legacyTemplatePath = Join-Path $stageRoot $legacyTemplateAsset
+        if (Test-Path -LiteralPath $legacyTemplatePath) {
+            throw "Legacy flattened template asset remains staged: $legacyTemplatePath"
         }
     }
 
@@ -237,32 +431,37 @@ try {
             Copy-DirectoryContents $sourceDirectory (Join-Path $pluginStage $directoryName)
         }
     }
-    Copy-Item -LiteralPath (Join-Path $repoRoot "UnrealEnginePython.uplugin") -Destination $pluginDescriptor -Force
+    Copy-FileIfChanged `
+        -Source (Join-Path $repoRoot "UnrealEnginePython.uplugin") `
+        -Destination $pluginDescriptor
 
-    $buildLog = Join-Path $resultRoot "build-editor.log"
-    $editorTarget = if ($Variant -eq "PythonFirst") {
-        "UEPPythonThirdPersonEditor"
+    $buildLog = $null
+    if ($Mode -ne "Prepare") {
+        $buildLog = Join-Path $resultRoot "build-editor.log"
+        $editorTarget = if ($Variant -eq "PythonFirst") {
+            "UEPPythonThirdPersonEditor"
+        }
+        else {
+            "UnrealEditor"
+        }
+        $buildArguments = @(
+            $ubtPath,
+            $editorTarget,
+            "Win64",
+            "Development",
+            "-Project=$projectPath",
+            "-NoHotReload",
+            "-NoMutex",
+            "-NoUBA",
+            "-MaxParallelActions=$MaxParallelActions",
+            "-Log=$buildLog"
+        )
+        if ($Variant -ne "PythonFirst") {
+            $buildArguments += "-plugin=$pluginDescriptor"
+        }
+        Invoke-CheckedProcess -FilePath $dotnetPath -ArgumentList $buildArguments -Label "Build demo plugin" -WorkingDirectory $repoRoot -TimeoutSeconds 3600
+        Assert-BuildLog $buildLog
     }
-    else {
-        "UnrealEditor"
-    }
-    $buildArguments = @(
-        $ubtPath,
-        $editorTarget,
-        "Win64",
-        "Development",
-        "-Project=$projectPath",
-        "-NoHotReload",
-        "-NoMutex",
-        "-NoUBA",
-        "-MaxParallelActions=$MaxParallelActions",
-        "-Log=$buildLog"
-    )
-    if ($Variant -ne "PythonFirst") {
-        $buildArguments += "-plugin=$pluginDescriptor"
-    }
-    Invoke-CheckedProcess -FilePath $dotnetPath -ArgumentList $buildArguments -Label "Build demo plugin" -WorkingDirectory $repoRoot -TimeoutSeconds 3600
-    Assert-BuildLog $buildLog
 
     if ($Mode -eq "Audit") {
         $auditScript = Join-Path $PSScriptRoot "UEPPythonThirdPerson\Tools\audit_template.py"
@@ -280,7 +479,8 @@ try {
             "-NoSplash",
             "-UTF8Output",
             "-DisablePython",
-            "-DisablePlugins=AndroidFileServer",
+            $disableNetworkPluginsArgument,
+            $disableTraceServerArgument,
             "-run=Py",
             $auditScript,
             "-UEPTemplateAuditResult=$auditResultPath",
@@ -306,6 +506,7 @@ try {
             $auditLog.Contains("Assertion failed:")) {
             throw "Template audit log failed its contract: $auditLogPath"
         }
+        Assert-CleanRuntimeLog $auditLogPath
         $summary = [ordered]@{
             schema_version = 1
             status = "passed"
@@ -348,7 +549,8 @@ try {
             "-NoSplash",
             "-UTF8Output",
             "-DisablePython",
-            "-DisablePlugins=AndroidFileServer",
+            $disableNetworkPluginsArgument,
+            $disableTraceServerArgument,
             $smokeResultArgument,
             "-abslog=$smokeLogPath"
         )
@@ -362,27 +564,10 @@ try {
         }
         $smokeReport = Get-Content -LiteralPath $smokeResultPath -Raw | ConvertFrom-Json
         if ($Variant -eq "PythonFirst") {
-            if ($smokeReport.status -ne "passed" -or
-                $smokeReport.python_version -notlike "3.11.*" -or
-                $smokeReport.game_mode_class -ne "UEPThirdPersonGameMode" -or
-                $smokeReport.controller_class -ne "UEPThirdPersonPlayerController" -or
-                $smokeReport.character_class -ne "UEPThirdPersonCharacter" -or
-                !$smokeReport.mapping_contexts.default -or
-                !$smokeReport.mapping_contexts.mouse_look -or
-                $smokeReport.input_binding_count -ne 5 -or
-                $smokeReport.movement_distance -le 25.0 -or
-                $smokeReport.look_delta -le 0.1 -or
-                !$smokeReport.jump_observed -or
-                $smokeReport.input_events.jump_started -le 0 -or
-                $smokeReport.input_events.jump_completed -le 0 -or
-                @($smokeReport.animation_states_observed).Count -lt 4 -or
-                @($smokeReport.animation_states_observed | Where-Object { $_ -in @("locomotion", "jump", "fall", "land") } | Sort-Object -Unique).Count -ne 4 -or
-                !$smokeReport.camera_boom_valid -or
-                !$smokeReport.follow_camera_valid -or
-                $smokeReport.python_tick_count -le 0 -or
-                $smokeReport.map_travel_count -ne 1) {
-                throw "Python-first demo smoke report failed its contract: $smokeResultPath"
-            }
+            Assert-PythonFirstReport `
+                -Report $smokeReport `
+                -ResultPath $smokeResultPath `
+                -Label "smoke"
         }
         elseif ($smokeReport.status -ne "passed" -or
             !$smokeReport.companion_valid -or
@@ -397,6 +582,10 @@ try {
                 "UEP_PYTHON_THIRD_PERSON_SCRIPT_LOADED",
                 "UEP_PYTHON_THIRD_PERSON_CLASSES_READY",
                 "UEP_PYTHON_THIRD_PERSON_WORLD_READY",
+                "UEP_PYTHON_THIRD_PERSON_GAMEPLAY_READY",
+                "UEP_PYTHON_THIRD_PERSON_HUD_READY",
+                "UEP_PYTHON_THIRD_PERSON_ROUND_COMPLETE",
+                "UEP_PYTHON_THIRD_PERSON_HUD_RELEASED",
                 "UEP_PYTHON_THIRD_PERSON_SMOKE_PASSED"
             )
         }
@@ -429,6 +618,7 @@ try {
                 throw "Demo log contains '$failureMarker': $smokeLogPath"
             }
         }
+        Assert-CleanRuntimeLog $smokeLogPath
 
         $summary = [ordered]@{
             schema_version = 1
@@ -450,6 +640,22 @@ try {
         $packageRoot = Join-Path $resultRoot "Package"
         $packageLogRoot = Join-Path $resultRoot "package-uat"
         $packageLog = Join-Path $packageLogRoot "Log.txt"
+        $gameBuildLog = Join-Path $resultRoot "build-game.log"
+        $gameBuildArguments = @(
+            $ubtPath,
+            "UEPPythonThirdPerson",
+            "Win64",
+            "Development",
+            "-Project=$projectPath",
+            "-NoHotReload",
+            "-NoMutex",
+            "-NoUBA",
+            "-MaxParallelActions=$MaxParallelActions",
+            "-Log=$gameBuildLog"
+        )
+        Invoke-CheckedProcess -FilePath $dotnetPath -ArgumentList $gameBuildArguments -Label "Build packaged demo target" -WorkingDirectory $repoRoot -TimeoutSeconds 7200
+        Assert-BuildLog $gameBuildLog
+
         $packageArguments = @(
             $automationToolPath,
             "BuildCookRun",
@@ -461,7 +667,7 @@ try {
             "-platform=Win64",
             "-clientconfig=Development",
             "-target=UEPPythonThirdPerson",
-            "-build",
+            "-skipbuild",
             "-SkipBuildEditor",
             "-cook",
             "-stage",
@@ -469,7 +675,7 @@ try {
             "-archive",
             "-archivedirectory=$packageRoot",
             "-map=/Game/ThirdPerson/Lvl_ThirdPerson",
-            "-AdditionalCookerOptions=-DisablePlugins=AndroidFileServer -SkipZenStore",
+            "-AdditionalCookerOptions=$disableNetworkPluginsArgument -SkipZenStore",
             "-nodebuginfo"
         )
         $packageEnvironment = @{
@@ -480,6 +686,7 @@ try {
         Assert-AutomationLog $packageLog
 
         $packagedExecutable = Get-ChildItem -LiteralPath $packageRoot -Filter "$demoName.exe" -File -Recurse |
+            Where-Object { $_.FullName -match '[\\/]Binaries[\\/]Win64[\\/]' } |
             Select-Object -First 1 -ExpandProperty FullName
         if (!$packagedExecutable) {
             throw "Packaged executable was not found under $packageRoot"
@@ -497,7 +704,8 @@ try {
             "-NoSplash",
             "-UTF8Output",
             "-DisablePython",
-            "-DisablePlugins=AndroidFileServer",
+            $disableNetworkPluginsArgument,
+            $disableTraceServerArgument,
             "-UEPPythonThirdPersonSmokeResult=$packagedResultPath",
             "-abslog=$packagedLogPath"
         )
@@ -508,33 +716,20 @@ try {
             throw "Packaged demo did not create its smoke result and log"
         }
         $packagedReport = Get-Content -LiteralPath $packagedResultPath -Raw | ConvertFrom-Json
-        if ($packagedReport.status -ne "passed" -or
-            $packagedReport.python_version -notlike "3.11.*" -or
-            $packagedReport.game_mode_class -ne "UEPThirdPersonGameMode" -or
-            $packagedReport.controller_class -ne "UEPThirdPersonPlayerController" -or
-            $packagedReport.character_class -ne "UEPThirdPersonCharacter" -or
-            !$packagedReport.mapping_contexts.default -or
-            !$packagedReport.mapping_contexts.mouse_look -or
-            $packagedReport.input_binding_count -ne 5 -or
-            $packagedReport.movement_distance -le 25.0 -or
-            $packagedReport.look_delta -le 0.1 -or
-            !$packagedReport.jump_observed -or
-            $packagedReport.input_events.jump_started -le 0 -or
-            $packagedReport.input_events.jump_completed -le 0 -or
-            @($packagedReport.animation_states_observed).Count -lt 4 -or
-            @($packagedReport.animation_states_observed | Where-Object { $_ -in @("locomotion", "jump", "fall", "land") } | Sort-Object -Unique).Count -ne 4 -or
-            !$packagedReport.camera_boom_valid -or
-            !$packagedReport.follow_camera_valid -or
-            $packagedReport.python_tick_count -le 0 -or
-            $packagedReport.map_travel_count -ne 1) {
-            throw "Packaged Python-first demo report failed its contract: $packagedResultPath"
-        }
+        Assert-PythonFirstReport `
+            -Report $packagedReport `
+            -ResultPath $packagedResultPath `
+            -Label "packaged smoke"
         $packagedLogContents = Get-Content -LiteralPath $packagedLogPath -Raw
         foreach ($marker in @(
             "Initialized engine CPython at",
             "UEP_PYTHON_THIRD_PERSON_SCRIPT_LOADED",
             "UEP_PYTHON_THIRD_PERSON_CLASSES_READY",
             "UEP_PYTHON_THIRD_PERSON_WORLD_READY",
+            "UEP_PYTHON_THIRD_PERSON_GAMEPLAY_READY",
+            "UEP_PYTHON_THIRD_PERSON_HUD_READY",
+            "UEP_PYTHON_THIRD_PERSON_ROUND_COMPLETE",
+            "UEP_PYTHON_THIRD_PERSON_HUD_RELEASED",
             "UEP_PYTHON_THIRD_PERSON_SMOKE_PASSED"
         )) {
             if (!$packagedLogContents.Contains($marker)) {
@@ -550,6 +745,7 @@ try {
                 throw "Packaged demo log contains '$failureMarker': $packagedLogPath"
             }
         }
+        Assert-CleanRuntimeLog $packagedLogPath
 
         $summary = [ordered]@{
             schema_version = 1
@@ -559,6 +755,7 @@ try {
             engine = "$($engineVersion.MajorVersion).$($engineVersion.MinorVersion).$($engineVersion.PatchVersion)"
             project = $projectPath
             build_log = $buildLog
+            game_build_log = $gameBuildLog
             package_log = $packageLog
             packaged_executable = $packagedExecutable
             packaged_smoke_log = $packagedLogPath
@@ -584,7 +781,8 @@ try {
             "-ResX=1280",
             "-ResY=720",
             "-DisablePython",
-            "-DisablePlugins=AndroidFileServer",
+            $disableNetworkPluginsArgument,
+            $disableTraceServerArgument,
             "-log"
         )
         $process = Start-Process -FilePath $editorPath -ArgumentList $playArguments -WorkingDirectory $stageRoot -PassThru
@@ -594,9 +792,11 @@ try {
         $process = Start-Process -FilePath $editorPath -ArgumentList @(
             $projectPath,
             "-DisablePython",
-            "-DisablePlugins=AndroidFileServer"
+            $disableNetworkPluginsArgument,
+            $disableTraceServerArgument
         ) -WorkingDirectory $stageRoot -PassThru
-        Write-Host "Demo editor launched (PID $($process.Id)). Press Play to start the Python gameplay."
+        Write-Host "Demo editor launched (PID $($process.Id)) for asset inspection."
+        Write-Host "Use -Mode Play to launch the PythonFirst GameMode in Standalone."
     }
     else {
         Write-Host "UEP Third Person demo is ready."
