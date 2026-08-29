@@ -3,14 +3,16 @@
 
 ## Unreal Engine 5.8 port
 
-**Current version: 0.6.0**
+**Current version: 0.7.0**
 
-Version 0.6.0 completes the Python-first Third Person vertical slice: generated
-Python Character, PlayerController and GameMode classes drive camera, real
-Enhanced Input, animation state, collectible rounds, a companion and a
-Python-owned Slate viewport HUD. Host tests, headless Standalone, Blueprint
-audit, Win64 package/runtime and visible-client gates pass on UE 5.8. See
-[`docs/Third_Person_Demo_0.6.0.md`](docs/Third_Person_Demo_0.6.0.md).
+Version 0.7.0 adds Blueprint-class Python mixins. Python can replace selected
+ordinary Blueprint `UFunction` implementations without changing the object's
+Unreal class, explicitly call the preserved Blueprint implementation, and
+restore the class map during reload or shutdown. The new Third Person variant
+keeps the official Character, PlayerController, GameMode, input EventGraph and
+AnimBP while Python owns `Move`, `Aim`, the collectible loop and viewport HUD.
+See [`docs/Mixin_API.md`](docs/Mixin_API.md) and
+[`docs/Third_Person_Mixin_Demo_0.7.0.md`](docs/Third_Person_Mixin_Demo_0.7.0.md).
 
 The release retains the genuinely Python-driven Lyra gameplay slice introduced
 in 0.5.0 and the hardened UE5 runtime binding beneath both examples. It targets **Unreal
@@ -20,9 +22,9 @@ Windows/Win64 remains the release-validated platform; a Linux lane is provided
 but is not a support claim until it produces a green UE5.8 build/runtime
 artifact.
 
-### 0.6.0 support contract
+### 0.7.0 support target
 
-The release baseline includes:
+The release target includes:
 
 * `UnrealGame` and `UnrealEditor` compilation against UE 5.8;
 * all four plugin modules linking (`UnrealEnginePython`, `PythonAutomation`,
@@ -31,6 +33,8 @@ The release baseline includes:
   Actor, asset and Slate coverage on Python 3.11;
 * dynamic Python `UClass`, `FProperty` and `UFunction` generation on UE5's
   `FField` model, including reflected parent-event overrides;
+* one reversible Python mixin per Blueprint-generated class, with per-UObject
+  state, helper methods, original-function calls and live-instance support;
 * scalar, struct, object, array, map and generic `TSet` property marshalling;
 * Enhanced Input mapping, action binding/removal and deterministic input
   injection adapters;
@@ -62,6 +66,14 @@ The release baseline includes:
 * deterministic Git source archives, checksums and optional UE5.8 `BuildPlugin`
   binary artifacts.
 
+Current exact-tree 0.7 evidence is the successful UE5.8 Editor incremental
+build and headless Mixin Standalone result `20260829-225225`, official-template
+audit `20260829-225525`, and Python-first 0.6 regression result
+`20260829-225336`, all on engine CPython 3.11.8. The new Mixin Cook/package and
+visible-client gates have not been run for this tree; older package evidence is
+historical evidence for the earlier feature set, not proof of the new Mixin
+path.
+
 The repeatable acceptance project and one-command build/test/package workflow
 are documented in [`Validation/README.md`](Validation/README.md). The sample is
 maintained with its original release history in
@@ -69,7 +81,8 @@ maintained with its original release history in
 and pinned here as the `Demos` submodule. Clone with `--recurse-submodules`, or
 run `git submodule update --init Demos` before following
 [`Demos/README.md`](Demos/README.md). See
-[`docs/Subclassing_API.md`](docs/Subclassing_API.md) and
+[`docs/Subclassing_API.md`](docs/Subclassing_API.md),
+[`docs/Mixin_API.md`](docs/Mixin_API.md), and
 [`docs/EnhancedInput_API.md`](docs/EnhancedInput_API.md) for the UE 5.8 gameplay
 APIs. See
 [`CHANGELOG.md`](CHANGELOG.md) for the release contents and
@@ -106,7 +119,7 @@ unambiguous-target hardening is covered by exact-source Network result
 `20260813-005436` and Standalone result `20260813-005835`; no package was
 rebuilt after that small change.
 
-### Known 0.6.0 boundaries
+### Known 0.7.0 boundaries
 
 Release-level runtime validation remains Win64-only. The local UE5.8 install
 reports that the Linux `v26_clang-20.1.8-rockylinux8` SDK is unavailable, so
@@ -118,10 +131,18 @@ mappings, damage execution and replication. The Lyra 0.5.0 write surface remains
 bounded, non-lethal authority health delta; it does not provide a generic client
 RPC, raw attribute setter or arbitrary Gameplay Effect launcher.
 
+Mixin 0.7 is intentionally limited to ordinary non-static Blueprint functions
+and events. RPCs, latent calls, delegate signatures, non-const output/reference
+parameters, multiple mixins on one target class and mixin chaining are not yet
+supported. Related base/derived Blueprint classes also cannot be registered at
+the same time. Unregister a mixin before recompiling its Blueprint in the editor.
+The 0.7 Mixin Win64 Cook/package and visible-client gates remain pending as
+noted above.
+
 To use this source release, place the plugin under a UE 5.8 project's `Plugins`
 directory, regenerate project files, and build it with that UE 5.8 installation.
 The remainder of this README is preserved upstream documentation and may
-describe legacy UE4 or external-Python behavior outside the 0.6.0 support
+describe legacy UE4 or external-Python behavior outside the 0.7.0 support
 contract above.
 
 ## Original upstream documentation

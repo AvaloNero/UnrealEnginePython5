@@ -112,6 +112,8 @@
 
 #include "PythonFunction.h"
 #include "PythonClass.h"
+#include "UEPyMixin.h"
+#include "InputActionValue.h"
 
 #if UEP_LEGACY_ENGINE_MINOR_VERSION >= 15
 #include "Engine/UserDefinedEnum.h"
@@ -256,6 +258,11 @@ static PyMethodDef unreal_engine_methods[] = {
 
 	{ "shutdown", py_unreal_engine_shutdown, METH_VARARGS, "" },
 	{ "set_brutal_finalize", py_unreal_engine_set_brutal_finalize, METH_VARARGS, "" },
+	{ "register_mixin", py_unreal_engine_register_mixin, METH_VARARGS, "Register or replace a Python mixin on a Blueprint-generated UClass." },
+	{ "mixin", py_unreal_engine_mixin, METH_VARARGS, "Return a class decorator that registers a Python mixin." },
+	{ "unregister_mixin", py_unreal_engine_unregister_mixin, METH_VARARGS, "Restore a Blueprint-generated UClass after removing its Python mixin." },
+	{ "unregister_all_mixins", py_unreal_engine_unregister_all_mixins, METH_VARARGS, "Restore every class with an active Python mixin." },
+	{ "get_registered_mixins", py_unreal_engine_get_registered_mixins, METH_VARARGS, "Describe active Python mixin registrations." },
 
 	{ "add_on_screen_debug_message", py_unreal_engine_add_on_screen_debug_message, METH_VARARGS, "" },
 	{ "print_string", py_unreal_engine_print_string, METH_VARARGS, "" },
@@ -740,6 +747,9 @@ static PyMethodDef ue_PyUObject_methods[] = {
 
 #pragma warning(suppress: 4191)
 	{ "call_function", (PyCFunction)py_ue_call_function, METH_VARARGS | METH_KEYWORDS, "" },
+
+#pragma warning(suppress: 4191)
+	{ "call_mixin_original", (PyCFunction)py_ue_call_mixin_original, METH_VARARGS | METH_KEYWORDS, "Call the original UFunction hidden by the active Python mixin." },
 
 
 	{ "all_objects", (PyCFunction)py_ue_all_objects, METH_VARARGS, "" },
@@ -1345,6 +1355,17 @@ static PyObject* ue_PyUObject_getattro(ue_PyUObject* self, PyObject* attr_name)
 				return py_ue_new_callable(function, self->ue_object);
 			}
 		}
+		PyErr_Clear();
+		PyObject* mixin_attribute = ue_py_get_mixin_attribute(self, attr_name);
+		if (mixin_attribute)
+		{
+			return mixin_attribute;
+		}
+		if (PyErr_Occurred())
+		{
+			return nullptr;
+		}
+		return PyObject_GenericGetAttr((PyObject*)self, attr_name);
 	}
 	return ret;
 }
@@ -2125,6 +2146,23 @@ PyObject* ue_py_convert_property(FProperty* prop, uint8* buffer, int32 index, bo
 	{
 		if (auto casted_struct = Cast<UScriptStruct>(casted_prop->Struct))
 		{
+			if (casted_struct == FInputActionValue::StaticStruct())
+			{
+				const FInputActionValue& value = *casted_prop->ContainerPtrToValuePtr<FInputActionValue>(buffer, index);
+				switch (value.GetValueType())
+				{
+				case EInputActionValueType::Boolean:
+					return PyBool_FromLong(value.Get<bool>() ? 1 : 0);
+				case EInputActionValueType::Axis1D:
+					return PyFloat_FromDouble(value.Get<float>());
+				case EInputActionValueType::Axis2D:
+					return py_ue_new_fvector2d(value.Get<FVector2D>());
+				case EInputActionValueType::Axis3D:
+					return py_ue_new_fvector(value.Get<FVector>());
+				default:
+					return PyErr_Format(PyExc_RuntimeError, "unsupported Enhanced Input action value type");
+				}
+			}
 			if (casted_struct == TBaseStructure<FVector>::Get())
 			{
 				FVector vec = *casted_prop->ContainerPtrToValuePtr<FVector>(buffer, index);

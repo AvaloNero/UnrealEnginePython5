@@ -202,9 +202,42 @@ HUD, physical mouse look and the SpaceBar jump/fall/land sequence; the final
 trace-disabled package relaunches with zero TCP listeners and no Windows
 Security picker.
 
-## 0.7.0 — Lyra Python HUD foundation
+## 0.7.0 — Blueprint mixins and retained-class Third Person
 
-Status: planned after 0.6.0 acceptance.
+Status: source implementation and headless Standalone acceptance complete;
+Win64 Cook/package and visible-client acceptance pending.
+
+- Add `register_mixin`, `mixin`, `unregister_mixin` and registry inspection for
+  Blueprint-generated classes.
+- Replace selected Blueprint `UFunction` map entries while keeping every object
+  and asset on its original Unreal class.
+- Preserve an explicit `call_mixin_original` path, per-UObject Python state and
+  helper methods without retaining bound-method reference cycles.
+- Restore every original function on explicit unregister, reload and process
+  shutdown.
+- Add a Third Person Mixin variant in which the official Blueprint input graph
+  calls Python `Move`/`Aim`, while Blueprint/native jump and AnimBP continue to
+  run unchanged.
+
+Acceptance gate: a live `BP_ThirdPersonCharacter_C` must move/look through
+Python without changing class, call its original BeginPlay, retain Blueprint
+jump/animation, survive unregister/re-register on the same pawn, restore the
+original Blueprint Move implementation and pass clean Standalone/package
+automation. The Engine and official template assets remain unchanged.
+
+Current evidence: result `20260829-225225` compiles `UEPyMixin.cpp`, links the
+UE5.8 Editor plugin and passes the schema-1 headless Standalone contract on
+CPython 3.11.8 with zero fatal/assert/`Log*: Error` diagnostics. It records the
+unchanged three `BP_*_C` types, `359.791` units of Python movement, Blueprint
+movement after live restoration, a new live registration generation, invalid-
+signature rejection without loss of the active generation, and two init/
+teardown generations. Template audit `20260829-225525` and Python-first
+regression `20260829-225336` also pass. Package and visible-client evidence is
+not yet recorded for 0.7.
+
+## 0.8.0 — Lyra Python HUD foundation
+
+Status: planned after 0.7.0 acceptance.
 
 - Reuse the proven HUD/session lifecycle while preserving Lyra's `ALyraHUD`,
   Game Feature activation and CommonUI ownership.
@@ -213,7 +246,7 @@ Status: planned after 0.6.0 acceptance.
 - Prove replicated `100 -> 90 -> 100`, respawn, travel, deactivation and zero
   dedicated-server widget creation.
 
-## 0.8.0 — Lyra combat and match HUD
+## 0.9.0 — Lyra combat HUD and API hardening
 
 Status: planned.
 
@@ -222,11 +255,6 @@ Status: planned.
 - Introduce a bounded reusable Gameplay Message subscription surface so HUD
   behavior is event-driven rather than tick-polled.
 - Keep inventory, equipment, GAS, scoring authority and replication native.
-
-## 0.9.0 — API freeze and production hardening
-
-Status: planned.
-
 - Extract reusable UI/lifecycle/message functionality from demo-specific code
   without introducing a Lyra dependency into the core binding.
 - Freeze the supported Python API, document deprecation rules and stress GC,

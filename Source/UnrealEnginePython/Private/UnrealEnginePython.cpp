@@ -2,6 +2,7 @@
 
 #include "UnrealEnginePython.h"
 #include "UEPyModule.h"
+#include "UEPyMixin.h"
 #include "PythonBlueprintFunctionLibrary.h"
 #include "HAL/IConsoleManager.h"
 #include "HAL/PlatformFilemanager.h"
@@ -34,6 +35,16 @@ void unreal_engine_python_shutdown_housekeeper();
 namespace
 {
 	FDelegateHandle GUEPEnginePreExitHandle;
+
+	void unreal_engine_python_pre_exit()
+	{
+		if (Py_IsInitialized())
+		{
+			FScopePythonGIL gil;
+			unreal_engine_python_unregister_all_mixins();
+		}
+		unreal_engine_python_shutdown_housekeeper();
+	}
 }
 
 #if PLATFORM_LINUX
@@ -578,7 +589,7 @@ void FUnrealEnginePythonModule::InitializePython()
 	bPythonInitialized = true;
 	if (!GUEPEnginePreExitHandle.IsValid())
 	{
-		GUEPEnginePreExitHandle = FCoreDelegates::OnEnginePreExit.AddStatic(&unreal_engine_python_shutdown_housekeeper);
+		GUEPEnginePreExitHandle = FCoreDelegates::OnEnginePreExit.AddStatic(&unreal_engine_python_pre_exit);
 	}
 }
 
@@ -589,7 +600,7 @@ void FUnrealEnginePythonModule::ShutdownModule()
 		FCoreDelegates::OnEnginePreExit.Remove(GUEPEnginePreExitHandle);
 		GUEPEnginePreExitHandle.Reset();
 	}
-	unreal_engine_python_shutdown_housekeeper();
+	unreal_engine_python_pre_exit();
 
 	if (AllModuleLoadingPhasesCompleteHandle.IsValid())
 	{

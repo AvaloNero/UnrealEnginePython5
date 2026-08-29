@@ -1,6 +1,7 @@
 
 #include "PythonFunction.h"
 #include "UEPyModule.h"
+#include "UEPyMixin.h"
 
 
 void UPythonFunction::SetPyCallable(PyObject *callable)
@@ -25,6 +26,11 @@ void UPythonFunction::CallPythonCallable(FFrame& Stack, RESULT_DECL)
 #endif
 
 	UPythonFunction *function = static_cast<UPythonFunction *>(Stack.CurrentNativeFunction);
+	if (!ue_py_prepare_mixin_call(function, Context))
+	{
+		unreal_engine_py_log_error();
+		return;
+	}
 
 	bool on_error = false;
 	bool is_static = function->HasAnyFunctionFlags(FUNC_Static);

@@ -3,6 +3,52 @@
 This file records the UE5 port maintained in this repository. The historical
 UE4 project history remains available in Git.
 
+## [0.7.0] - 2026-08-29
+
+### Added
+
+- Reversible Blueprint-class Python mixins through `register_mixin`, the
+  `mixin` decorator, `unregister_mixin`, `unregister_all_mixins` and
+  `get_registered_mixins`.
+- Per-UObject mixin initialization/state and on-demand helper-method binding
+  while preserving the object's original Blueprint-generated `UClass`.
+- `call_mixin_original()` for explicitly executing the Blueprint/native
+  implementation hidden by a mixed Python function.
+- Native conversion of reflected `FInputActionValue` parameters to Python
+  bool, float, `FVector2D` or `FVector` values.
+- Registration-time Python signature validation; a rejected replacement keeps
+  the currently active mixin generation intact.
+- A Third Person `Mixin` demo variant that retains the official Blueprint
+  Character, Controller, GameMode, input graph and AnimBP while Python replaces
+  `Move`/`Aim` and adds the existing collectible/HUD loop.
+
+### Changed
+
+- Python mixins are restored before the Python housekeeper/interpreter shuts
+  down, so injected function maps cannot outlive their Python callables.
+- The Third Person runner now stages and validates `Overlay`, `PythonFirst` and
+  `Mixin` independently and has a dedicated mixin smoke/package report contract.
+
+### Supported boundaries
+
+- Version 0.7 permits one mixin on a Blueprint-generated class and ordinary
+  instance functions/events only. RPC, latent, static/delegate functions,
+  non-const output/reference parameters and multi-mixin chaining are rejected.
+- Simultaneous registrations on related base/derived Blueprint classes are
+  rejected so no restored function can depend on another generation.
+- Blueprint assets should be unregistered before editor recompilation. The
+  implementation changes neither Unreal Engine source nor the staged official
+  Third Person assets.
+
+### Validation
+
+- UE5.8 Editor incremental build and headless Mixin Standalone result
+  `20260829-225225` pass on engine CPython 3.11.8 with a clean runtime log.
+- Official-template audit `20260829-225525` and the existing 0.6 Python-first
+  runtime regression `20260829-225336` pass.
+- The 0.7 Mixin Cook/package and visible-client gates were not run in this
+  implementation pass.
+
 ## [0.6.0] - 2026-08-24
 
 ### Added
