@@ -10,6 +10,12 @@ UE4 project history remains available in Git.
 - Reversible Blueprint-class Python mixins through `register_mixin`, the
   `mixin` decorator, `unregister_mixin`, `unregister_all_mixins` and
   `get_registered_mixins`.
+- A class-level Mixin Router with named profiles, per-instance
+  `set_mixin_profile`/`clear_mixin_profile` selection and automatic preserved-
+  Blueprint fallback for functions omitted by the active profile.
+- `UEPPythonMixinInterface` and `UEPPythonMixinSet` for CDO-declared profile
+  sets with instance-selected profile names, plus loaded-class discovery and
+  explicit rescan APIs.
 - Per-UObject mixin initialization/state and on-demand helper-method binding
   while preserving the object's original Blueprint-generated `UClass`.
 - `call_mixin_original()` for explicitly executing the Blueprint/native
@@ -19,8 +25,15 @@ UE4 project history remains available in Git.
 - Registration-time Python signature validation; a rejected replacement keeps
   the currently active mixin generation intact.
 - A Third Person `Mixin` demo variant that retains the official Blueprint
-  Character, Controller, GameMode, input graph and AnimBP while Python replaces
-  `Move`/`Aim` and adds the existing collectible/HUD loop.
+  Character, Controller, GameMode, input graph and AnimBP while two instances
+  of the same Character class use different Python profiles; one profile omits
+  `Move` to prove automatic original-Blueprint fallback.
+- A real asset-authored Interface/Mixin Set regression fixture with one direct
+  Blueprint owner and one inherited child, generated deterministically through
+  the Editor-only `blueprint_configure_mixin` helper.
+- A playable `DA_ThirdPersonCharacterMixin` declaration and an example-owned
+  same-path Character BP copy whose instance-editable `PythonMixinProfile`
+  variable selects profiles without changing `BP_ThirdPersonCharacter_C`.
 
 ### Changed
 
@@ -28,26 +41,52 @@ UE4 project history remains available in Git.
   down, so injected function maps cannot outlive their Python callables.
 - The Third Person runner now stages and validates `Overlay`, `PythonFirst` and
   `Mixin` independently and has a dedicated mixin smoke/package report contract.
+- Interface discovery now uses the all-build package-completion delegate and
+  registers only the Blueprint class that directly declares the Interface.
+- Automatic missing-profile fallback copies compatible native properties into
+  the preserved UFunction's own frame before direct dispatch, retaining
+  scalar/array returns and const-array inputs even when linked offsets differ.
+- Registry mutation is rejected across selector, initializer, teardown, mixed
+  callable and original-call callback boundaries; instance state is re-resolved
+  after callbacks instead of retaining invalidatable container references.
+- The Editor authoring helper can now create/reuse a scalar `Name` variable and
+  wire `GetPythonMixinProfile` to it; the normal Third Person startup registers
+  plain profile classes from the BP's Mixin Set, while direct registration is
+  retained only as an explicit regression phase.
+- Cook commandlets skip Mixin discovery/bootstrap and reject registry mutation,
+  preventing transient routed `UFunction` entries from being serialized into
+  cooked Blueprint assets; registration occurs after the packaged runtime starts.
 
 ### Supported boundaries
 
-- Version 0.7 permits one mixin on a Blueprint-generated class and ordinary
-  instance functions/events only. RPC, latent, static/delegate functions,
-  non-const output/reference parameters and multi-mixin chaining are rejected.
+- Version 0.7 permits one router with multiple mutually exclusive profiles on a
+  Blueprint-generated class and ordinary instance functions/events only. RPC,
+  latent, static/delegate functions, non-const output/reference parameters and
+  ordered profile chaining are rejected.
 - Simultaneous registrations on related base/derived Blueprint classes are
   rejected so no restored function can depend on another generation.
 - Blueprint assets should be unregistered before editor recompilation. The
-  implementation changes neither Unreal Engine source nor the staged official
-  Third Person assets.
+  implementation changes neither Unreal Engine source nor the installed Third
+  Person template. The examples overlay intentionally owns a configured copy of
+  the Character BP; its original gameplay graphs remain intact.
 
 ### Validation
 
-- UE5.8 Editor incremental build and headless Mixin Standalone result
-  `20260829-225225` pass on engine CPython 3.11.8 with a clean runtime log.
+- UE5.8 repeat-generation result `20260831-012003` and schema-4 headless Mixin
+  Standalone result `20260831-012054` pass on engine CPython 3.11.8. They cover
+  the playable Character's BP-declared Mixin Set/profile variable, same-BP
+  selection, Blueprint fallback, direct and declared re-registration, final
+  restoration, the package-load Interface fixture, native const-array/return
+  fallback and callback-reentry guards with clean build/runtime logs.
 - Official-template audit `20260829-225525` and the existing 0.6 Python-first
   runtime regression `20260829-225336` pass.
-- The 0.7 Mixin Cook/package and visible-client gates were not run in this
-  implementation pass.
+- Win64 Package result `20260831-014230` builds the Editor and Game targets,
+  cooks/stages/archives 0.714 GiB and passes the schema-4 contract in the
+  packaged executable. Its Cook log has one commandlet-bootstrap skip marker,
+  zero Mixin registrations and clean strict diagnostics. The tested executable
+  SHA-256 is
+  `99BFA1CC83C89CB0E5A8898839547802CAE3CBFAA87B81BB277BA8EF3B775DB5`.
+- The visible-client manual gate has not yet been recorded for this tree.
 
 ## [0.6.0] - 2026-08-24
 

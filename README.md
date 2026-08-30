@@ -5,12 +5,16 @@
 
 **Current version: 0.7.0**
 
-Version 0.7.0 adds Blueprint-class Python mixins. Python can replace selected
-ordinary Blueprint `UFunction` implementations without changing the object's
-Unreal class, explicitly call the preserved Blueprint implementation, and
-restore the class map during reload or shutdown. The new Third Person variant
-keeps the official Character, PlayerController, GameMode, input EventGraph and
-AnimBP while Python owns `Move`, `Aim`, the collectible loop and viewport HUD.
+Version 0.7.0 adds Blueprint-class Python mixins. One class router can host
+multiple named Python profiles, choose one per UObject instance without changing
+its Unreal class, automatically fall back to a preserved Blueprint function
+when the active profile does not implement it, and restore the class map during
+reload or shutdown. The new Third Person variant keeps the official Character,
+ PlayerController, GameMode, input EventGraph and AnimBP while demonstrating
+ per-instance Python/Blueprint movement profiles, the collectible loop and HUD.
+ The router is hardened against callback-driven registry reentry, discovers
+ directly declared Interface owners after package load in non-Editor builds and
+ performs automatic original fallback on the native parameter frame.
 See [`docs/Mixin_API.md`](docs/Mixin_API.md) and
 [`docs/Third_Person_Mixin_Demo_0.7.0.md`](docs/Third_Person_Mixin_Demo_0.7.0.md).
 
@@ -33,8 +37,10 @@ The release target includes:
   Actor, asset and Slate coverage on Python 3.11;
 * dynamic Python `UClass`, `FProperty` and `UFunction` generation on UE5's
   `FField` model, including reflected parent-event overrides;
-* one reversible Python mixin per Blueprint-generated class, with per-UObject
-  state, helper methods, original-function calls and live-instance support;
+* one reversible mixin router per Blueprint-generated class, with named
+  per-UObject profiles, Mixin Set/Blueprint Interface declarations, helper
+  methods, automatic Blueprint fallback, explicit original-function calls and
+  live-instance switching;
 * scalar, struct, object, array, map and generic `TSet` property marshalling;
 * Enhanced Input mapping, action binding/removal and deterministic input
   injection adapters;
@@ -66,13 +72,21 @@ The release target includes:
 * deterministic Git source archives, checksums and optional UE5.8 `BuildPlugin`
   binary artifacts.
 
-Current exact-tree 0.7 evidence is the successful UE5.8 Editor incremental
-build and headless Mixin Standalone result `20260829-225225`, official-template
-audit `20260829-225525`, and Python-first 0.6 regression result
-`20260829-225336`, all on engine CPython 3.11.8. The new Mixin Cook/package and
-visible-client gates have not been run for this tree; older package evidence is
-historical evidence for the earlier feature set, not proof of the new Mixin
-path.
+Repeat-generation result `20260831-012003` and schema-4 headless Mixin
+Standalone result `20260831-012054` pass on UE 5.8.0 and engine CPython 3.11.8.
+Win64 Package result `20260831-014230` builds the Game target, cooks, archives
+and passes the same schema-4 contract from the packaged executable. The playable
+Character declares its profiles through a project-owned BP Interface and
+`UEPPythonMixinSet`; its instance-editable `PythonMixinProfile` variable selects
+independently for same-class objects. The runs cover Blueprint fallback,
+explicit-selector precedence and invalidation, direct-API regression, declared
+re-registration, package-load discovery, native const-array/return fallback,
+callback-reentry guards and balanced final restoration. Cook commandlets skip
+Mixin bootstrap and registry mutation, so routed functions are installed only
+in the launched runtime and are never serialized into cooked assets.
+Official-template audit `20260829-225525` and Python-first 0.6 regression
+`20260829-225336` remain supporting evidence. Build, Cook and runtime logs are
+clean; only the visible-client manual gate remains pending.
 
 The repeatable acceptance project and one-command build/test/package workflow
 are documented in [`Validation/README.md`](Validation/README.md). The sample is
@@ -133,11 +147,16 @@ RPC, raw attribute setter or arbitrary Gameplay Effect launcher.
 
 Mixin 0.7 is intentionally limited to ordinary non-static Blueprint functions
 and events. RPCs, latent calls, delegate signatures, non-const output/reference
-parameters, multiple mixins on one target class and mixin chaining are not yet
-supported. Related base/derived Blueprint classes also cannot be registered at
-the same time. Unregister a mixin before recompiling its Blueprint in the editor.
-The 0.7 Mixin Win64 Cook/package and visible-client gates remain pending as
-noted above.
+ parameters and ordered profile chaining are not yet supported. A class router
+ may contain multiple mutually exclusive profiles, but only one is active per
+ object. Related base/derived Blueprint classes also cannot be registered at the
+ same time; only the Blueprint that directly adds the Mixin Interface owns the
+ shared router, while descendants inherit it. Registry-changing APIs are rejected
+ inside selector/initializer/teardown and dispatch callback boundaries.
+ Unregister a router before intentionally changing its Blueprint function
+ signatures in the editor.
+The 0.7 Mixin Win64 Cook/package gate passes; the visible-client manual gate
+remains pending as noted above.
 
 To use this source release, place the plugin under a UE 5.8 project's `Plugins`
 directory, regenerate project files, and build it with that UE 5.8 installation.

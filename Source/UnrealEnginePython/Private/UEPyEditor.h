@@ -80,6 +80,7 @@ PyObject *py_unreal_engine_blueprint_add_event_dispatcher(PyObject *, PyObject *
 PyObject *py_unreal_engine_editor_take_high_res_screen_shots(PyObject *, PyObject *);
 
 PyObject *py_unreal_engine_blueprint_add_function(PyObject *, PyObject *);
+PyObject *py_unreal_engine_blueprint_configure_mixin(PyObject *, PyObject *);
 PyObject *py_unreal_engine_blueprint_add_ubergraph_page(PyObject *, PyObject *);
 PyObject *py_unreal_engine_blueprint_get_all_graphs(PyObject *, PyObject *);
 

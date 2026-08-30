@@ -38,6 +38,7 @@ namespace
 
 	void unreal_engine_python_pre_exit()
 	{
+		unreal_engine_python_disable_mixin_discovery();
 		if (Py_IsInitialized())
 		{
 			FScopePythonGIL gil;
@@ -575,6 +576,11 @@ void FUnrealEnginePythonModule::InitializePython()
 			unreal_engine_py_log_error();
 		}
 	}
+
+	// Interface-backed Mixin Sets are discovered after project bootstrap modules
+	// have had a chance to define/import their Python profile classes. The asset
+	// load hook handles Blueprint classes loaded later by a map or soft reference.
+	unreal_engine_python_enable_mixin_discovery();
 
 	if (OwnsPythonInterpreter)
 	{

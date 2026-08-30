@@ -1,12 +1,42 @@
 #include "UEPyMixin.h"
 
 #include "PythonFunction.h"
+#include "PythonMixin.h"
 #include "UEPyModule.h"
+#include "Async/Async.h"
+#include "CoreGlobals.h"
+#include "UObject/Package.h"
+#include "UObject/UObjectHash.h"
+#include "UObject/UObjectGlobals.h"
 #include "UObject/UObjectIterator.h"
 
 namespace
 {
-	constexpr const char* MixinGenerationKey = "__uep_mixin_registration__";
+	int32 GMixinCallbackDepth = 0;
+	int32 GMixinMutationDepth = 0;
+}
+
+FUEPyScopedMixinCallback::FUEPyScopedMixinCallback()
+{
+	++GMixinCallbackDepth;
+}
+
+FUEPyScopedMixinCallback::~FUEPyScopedMixinCallback()
+{
+	check(GMixinCallbackDepth > 0);
+	--GMixinCallbackDepth;
+}
+
+bool FUEPyScopedMixinCallback::IsActive()
+{
+	return GMixinCallbackDepth > 0;
+}
+
+namespace
+{
+	const FName DefaultMixinProfileName(TEXT("Default"));
+	const FName MixinSetFunctionName(TEXT("GetPythonMixinSet"));
+	const FName MixinProfileFunctionName(TEXT("GetPythonMixinProfile"));
 	constexpr const char* MixinTeardownName = "__uep_mixin_teardown__";
 
 	struct FMixinFunctionBinding
@@ -18,25 +48,102 @@ namespace
 		bool bOriginalOwnedByTarget = false;
 	};
 
+	struct FMixinProfileBinding
+	{
+		uint64 GenerationId = 0;
+		FName ProfileName = NAME_None;
+		PyObject* PythonClass = nullptr;
+		TMap<FName, PyObject*> Callables;
+		TSet<TWeakObjectPtr<UObject>> InitializedObjects;
+	};
+
+	struct FMixinInstanceState
+	{
+		FName ExplicitProfile = NAME_None;
+		FName ActiveProfile = NAME_None;
+		uint64 ActiveGenerationId = 0;
+		bool bResolving = false;
+		bool bInitializing = false;
+		bool bTearingDown = false;
+	};
+
 	struct FMixinBinding
 	{
 		uint64 RegistrationId = 0;
 		UClass* TargetClass = nullptr;
-		PyObject* PythonClass = nullptr;
+		FName DefaultProfile = NAME_None;
+		TMap<FName, TUniquePtr<FMixinProfileBinding>> Profiles;
 		TArray<FMixinFunctionBinding> Functions;
-		TSet<TWeakObjectPtr<UObject>> InitializedObjects;
+		TMap<TWeakObjectPtr<UObject>, FMixinInstanceState> InstanceStates;
+		TWeakObjectPtr<UUEPPythonMixinSet> DeclaredSet;
+		uint32 DispatchesUntilCleanup = 256;
+		bool bMutating = false;
+		bool bUnregistering = false;
 	};
 
 	struct FMixinCandidate
 	{
 		FName PublicName = NAME_None;
 		UFunction* OriginalFunction = nullptr;
-		PyObject* PythonCallable = nullptr; // Borrowed from the Python class dictionary.
+		PyObject* PythonCallable = nullptr; // Owned until transferred to a profile.
+	};
+
+	struct FLoadedProfile
+	{
+		FName ProfileName = NAME_None;
+		PyObject* PythonClass = nullptr;
 	};
 
 	TMap<UClass*, TUniquePtr<FMixinBinding>> GMixinsByClass;
 	TMap<uint64, FMixinBinding*> GMixinsById;
+	TSet<TWeakObjectPtr<UClass>> GDeclaringClasses;
 	uint64 GNextMixinRegistrationId = 1;
+	uint64 GNextMixinProfileGenerationId = 1;
+	FDelegateHandle GMixinPackageLoadedHandle;
+
+	class FScopedMixinMutation
+	{
+	public:
+		FScopedMixinMutation()
+		{
+			++GMixinMutationDepth;
+		}
+
+		~FScopedMixinMutation()
+		{
+			check(GMixinMutationDepth > 0);
+			--GMixinMutationDepth;
+		}
+	};
+
+	bool EnsureMixinRegistryMutationAllowed(const char* api_name)
+	{
+		if (IsRunningCookCommandlet())
+		{
+			PyErr_Format(
+				PyExc_RuntimeError,
+				"%s cannot modify the mixin registry while Unreal is cooking assets",
+				api_name);
+			return false;
+		}
+		if (FUEPyScopedMixinCallback::IsActive())
+		{
+			PyErr_Format(
+				PyExc_RuntimeError,
+				"%s cannot modify the mixin registry while Python or Blueprint mixin logic is executing",
+				api_name);
+			return false;
+		}
+		if (GMixinMutationDepth > 0)
+		{
+			PyErr_Format(
+				PyExc_RuntimeError,
+				"%s cannot re-enter an in-progress mixin registry mutation",
+				api_name);
+			return false;
+		}
+		return true;
+	}
 
 	void ClearFunctionCaches(UClass* target_class)
 	{
@@ -95,6 +202,12 @@ namespace
 		return nullptr;
 	}
 
+	FMixinBinding* FindBindingById(uint64 registration_id)
+	{
+		FMixinBinding** found = GMixinsById.Find(registration_id);
+		return found ? *found : nullptr;
+	}
+
 	FMixinFunctionBinding* FindFunctionBinding(FMixinBinding* binding, FName function_name)
 	{
 		if (!binding)
@@ -106,6 +219,16 @@ namespace
 			{
 				return item.PublicName == function_name;
 			});
+	}
+
+	FMixinProfileBinding* FindProfile(FMixinBinding* binding, FName profile_name)
+	{
+		if (!binding)
+		{
+			return nullptr;
+		}
+		TUniquePtr<FMixinProfileBinding>* found = binding->Profiles.Find(profile_name);
+		return found ? found->Get() : nullptr;
 	}
 
 	PyObject* GetLocalClassAttribute(PyObject* python_class, const char* attribute_name)
@@ -127,106 +250,379 @@ namespace
 		return value;
 	}
 
-	bool EnsureInstanceInitialized(FMixinBinding* binding, UObject* context)
+	void RemoveInvalidInstanceStates(FMixinBinding& binding)
 	{
-		if (!binding || !context || !context->IsA(binding->TargetClass))
+		for (auto it = binding.InstanceStates.CreateIterator(); it; ++it)
 		{
-			PyErr_SetString(PyExc_RuntimeError, "mixin dispatch target is no longer valid");
-			return false;
+			if (!it.Key().IsValid())
+			{
+				it.RemoveCurrent();
+			}
 		}
-
-		ue_PyUObject* py_context = ue_get_python_uobject(context);
-		if (!py_context || !py_context->py_dict)
+		for (TPair<FName, TUniquePtr<FMixinProfileBinding>>& pair : binding.Profiles)
 		{
-			PyErr_SetString(PyExc_RuntimeError, "unable to create the UObject Python wrapper for mixin dispatch");
-			return false;
+			for (auto it = pair.Value->InitializedObjects.CreateIterator(); it; ++it)
+			{
+				if (!it->IsValid())
+				{
+					it.RemoveCurrent();
+				}
+			}
 		}
+	}
 
-		PyObject* generation = PyDict_GetItemString(py_context->py_dict, MixinGenerationKey);
-		if (generation && PyLong_Check(generation) &&
-			PyLong_AsUnsignedLongLong(generation) == binding->RegistrationId)
+	void ClearActiveState(FMixinInstanceState& state)
+	{
+		state.ActiveProfile = NAME_None;
+		state.ActiveGenerationId = 0;
+	}
+
+	bool IsInstanceStateBusy(const FMixinInstanceState& state)
+	{
+		return state.bResolving || state.bInitializing || state.bTearingDown;
+	}
+
+	void SetBusyStateError(const TCHAR* operation, UObject* context)
+	{
+		PyErr_Format(
+			PyExc_RuntimeError,
+			"cannot %s Python mixin state for %s while that instance is resolving, initializing, or tearing down",
+			TCHAR_TO_UTF8(operation),
+			context ? TCHAR_TO_UTF8(*context->GetPathName()) : "<invalid>");
+	}
+
+	bool RunTeardownHook(PyObject* python_class, UObject* context)
+	{
+		if (!python_class || !context)
 		{
 			return true;
 		}
-		if (PyErr_Occurred())
+
+		ue_PyUObject* py_object = FUnrealEnginePythonHouseKeeper::Get()->GetPyUObject(context);
+		if (!py_object || !py_object->py_dict)
+		{
+			return true;
+		}
+
+		FUEPyScopedMixinCallback callback_scope;
+		PyObject* teardown = GetLocalClassAttribute(python_class, MixinTeardownName);
+		if (!teardown)
+		{
+			return !PyErr_Occurred();
+		}
+
+		PyObject* result = PyObject_CallFunctionObjArgs(
+			teardown,
+			reinterpret_cast<PyObject*>(py_object),
+			nullptr);
+		Py_DECREF(teardown);
+		if (!result)
 		{
 			return false;
 		}
-
-		PyObject* generation_value = PyLong_FromUnsignedLongLong(binding->RegistrationId);
-		if (!generation_value ||
-			PyDict_SetItemString(py_context->py_dict, MixinGenerationKey, generation_value) < 0)
-		{
-			Py_XDECREF(generation_value);
-			return false;
-		}
-		Py_DECREF(generation_value);
-
-		PyObject* initializer = GetLocalClassAttribute(binding->PythonClass, "__init__");
-		if (initializer)
-		{
-			PyObject* result = PyObject_CallFunctionObjArgs(initializer, reinterpret_cast<PyObject*>(py_context), nullptr);
-			Py_DECREF(initializer);
-			if (!result)
-			{
-				PyDict_DelItemString(py_context->py_dict, MixinGenerationKey);
-				return false;
-			}
-			Py_DECREF(result);
-		}
-		else if (PyErr_Occurred())
-		{
-			PyDict_DelItemString(py_context->py_dict, MixinGenerationKey);
-			return false;
-		}
-
-		binding->InitializedObjects.Add(context);
+		Py_DECREF(result);
 		return true;
 	}
 
-	void TeardownInitializedObjects(FMixinBinding& binding)
+	bool TeardownActiveProfile(uint64 registration_id, UObject* context)
 	{
-		PyObject* teardown = GetLocalClassAttribute(binding.PythonClass, MixinTeardownName);
-		if (!teardown && PyErr_Occurred())
+		FMixinBinding* binding = FindBindingById(registration_id);
+		if (!binding || !context)
 		{
-			unreal_engine_py_log_error();
+			PyErr_SetString(PyExc_RuntimeError, "mixin binding disappeared while tearing down an instance");
+			return false;
 		}
 
-		for (const TWeakObjectPtr<UObject>& weak_object : binding.InitializedObjects)
+		const TWeakObjectPtr<UObject> object_key(context);
+		FMixinInstanceState* state = binding->InstanceStates.Find(object_key);
+		if (!state || state->ActiveGenerationId == 0)
+		{
+			if (state)
+			{
+				ClearActiveState(*state);
+			}
+			return true;
+		}
+		if (IsInstanceStateBusy(*state))
+		{
+			SetBusyStateError(TEXT("tear down"), context);
+			return false;
+		}
+
+		const FName active_name = state->ActiveProfile;
+		const uint64 active_generation = state->ActiveGenerationId;
+		FMixinProfileBinding* active = FindProfile(binding, active_name);
+		const bool owns_state = active && active->GenerationId == active_generation;
+		PyObject* python_class = owns_state ? active->PythonClass : nullptr;
+		Py_XINCREF(python_class);
+		if (owns_state)
+		{
+			active->InitializedObjects.Remove(object_key);
+		}
+		ClearActiveState(*state);
+		state->bTearingDown = true;
+
+		bool succeeded = true;
+		if (python_class)
+		{
+			succeeded = RunTeardownHook(python_class, context);
+		}
+		Py_XDECREF(python_class);
+
+		binding = FindBindingById(registration_id);
+		state = binding ? binding->InstanceStates.Find(object_key) : nullptr;
+		if (state)
+		{
+			state->bTearingDown = false;
+		}
+		else if (succeeded)
+		{
+			PyErr_SetString(PyExc_RuntimeError, "mixin instance state disappeared during teardown");
+			succeeded = false;
+		}
+		return succeeded;
+	}
+
+	void TeardownProfile(uint64 registration_id, FName profile_name, uint64 generation_id)
+	{
+		FMixinBinding* binding = FindBindingById(registration_id);
+		FMixinProfileBinding* profile = FindProfile(binding, profile_name);
+		if (!profile || profile->GenerationId != generation_id)
+		{
+			return;
+		}
+		TArray<TWeakObjectPtr<UObject>> initialized = profile->InitializedObjects.Array();
+		for (const TWeakObjectPtr<UObject>& weak_object : initialized)
 		{
 			UObject* object = weak_object.Get();
 			if (!object)
 			{
 				continue;
 			}
-
-			ue_PyUObject* py_object = FUnrealEnginePythonHouseKeeper::Get()->GetPyUObject(object);
-			if (!py_object || !py_object->py_dict)
+			binding = FindBindingById(registration_id);
+			FMixinInstanceState* state = binding ? binding->InstanceStates.Find(weak_object) : nullptr;
+			if (!state || state->ActiveGenerationId != generation_id)
 			{
 				continue;
 			}
-
-			if (teardown)
+			if (!TeardownActiveProfile(registration_id, object) && PyErr_Occurred())
 			{
-				PyObject* result = PyObject_CallFunctionObjArgs(teardown, reinterpret_cast<PyObject*>(py_object), nullptr);
-				if (!result)
-				{
-					unreal_engine_py_log_error();
-				}
-				else
-				{
-					Py_DECREF(result);
-				}
+				unreal_engine_py_log_error();
 			}
+		}
+		binding = FindBindingById(registration_id);
+		profile = FindProfile(binding, profile_name);
+		if (profile && profile->GenerationId == generation_id)
+		{
+			profile->InitializedObjects.Empty();
+		}
+	}
 
-			if (PyDict_DelItemString(py_object->py_dict, MixinGenerationKey) < 0)
+	void ReleaseProfile(FMixinProfileBinding& profile)
+	{
+		for (TPair<FName, PyObject*>& pair : profile.Callables)
+		{
+			Py_XDECREF(pair.Value);
+			pair.Value = nullptr;
+		}
+		profile.Callables.Empty();
+		Py_CLEAR(profile.PythonClass);
+	}
+
+	bool ResolveRequestedProfile(uint64 registration_id, UObject* context, FName& out_profile_name)
+	{
+		out_profile_name = NAME_None;
+		FMixinBinding* binding = FindBindingById(registration_id);
+		if (!binding || !context || binding->bMutating || binding->bUnregistering)
+		{
+			PyErr_SetString(PyExc_RuntimeError, "mixin router is unavailable while its registration is changing");
+			return false;
+		}
+
+		const TWeakObjectPtr<UObject> object_key(context);
+		FMixinInstanceState* state = &binding->InstanceStates.FindOrAdd(object_key);
+		if (IsInstanceStateBusy(*state))
+		{
+			SetBusyStateError(TEXT("resolve"), context);
+			return false;
+		}
+		if (!state->ExplicitProfile.IsNone())
+		{
+			out_profile_name = state->ExplicitProfile;
+			return true;
+		}
+		// The interface is an instance-selection hook, not a per-call policy VM.
+		// Cache its answer after the first dispatch; set_mixin_profile switches it
+		// explicitly and clear_mixin_profile invalidates it for re-resolution.
+		if (state->ActiveGenerationId != 0 && !state->ActiveProfile.IsNone())
+		{
+			FMixinProfileBinding* active = FindProfile(binding, state->ActiveProfile);
+			if (active && active->GenerationId == state->ActiveGenerationId)
 			{
-				PyErr_Clear();
+				out_profile_name = state->ActiveProfile;
+				return true;
 			}
 		}
 
-		Py_XDECREF(teardown);
-		binding.InitializedObjects.Empty();
+		FName selected = NAME_None;
+		if (context && context->GetClass()->ImplementsInterface(UUEPPythonMixinInterface::StaticClass()))
+		{
+			state->bResolving = true;
+			{
+				FUEPyScopedMixinCallback callback_scope;
+				selected = IUEPPythonMixinInterface::Execute_GetPythonMixinProfile(context);
+			}
+
+			binding = FindBindingById(registration_id);
+			state = binding ? binding->InstanceStates.Find(object_key) : nullptr;
+			if (!binding || !state)
+			{
+				PyErr_SetString(PyExc_RuntimeError, "mixin instance state disappeared while resolving its profile");
+				return false;
+			}
+			state->bResolving = false;
+		}
+		if (selected.IsNone())
+		{
+			selected = binding->DefaultProfile;
+		}
+		if (selected.IsNone() && binding->Profiles.Num() == 1)
+		{
+			for (const TPair<FName, TUniquePtr<FMixinProfileBinding>>& pair : binding->Profiles)
+			{
+				selected = pair.Key;
+				break;
+			}
+		}
+		out_profile_name = selected;
+		return true;
+	}
+
+	FMixinProfileBinding* ResolveAndInitializeProfile(FMixinBinding* binding, UObject* context)
+	{
+		if (!binding || !context || !context->IsA(binding->TargetClass) || binding->bMutating || binding->bUnregistering)
+		{
+			PyErr_SetString(PyExc_RuntimeError, "mixin dispatch target or router is not currently available");
+			return nullptr;
+		}
+		const uint64 registration_id = binding->RegistrationId;
+
+		if (binding->DispatchesUntilCleanup == 0)
+		{
+			RemoveInvalidInstanceStates(*binding);
+			binding->DispatchesUntilCleanup = 256;
+		}
+		else
+		{
+			--binding->DispatchesUntilCleanup;
+		}
+		const TWeakObjectPtr<UObject> object_key(context);
+		FName requested_name = NAME_None;
+		if (!ResolveRequestedProfile(registration_id, context, requested_name))
+		{
+			return nullptr;
+		}
+		if (requested_name.IsNone())
+		{
+			PyErr_Format(
+				PyExc_RuntimeError,
+				"no Python mixin profile is selected for %s",
+				TCHAR_TO_UTF8(*context->GetPathName()));
+			return nullptr;
+		}
+
+		binding = FindBindingById(registration_id);
+		FMixinInstanceState* state = binding ? binding->InstanceStates.Find(object_key) : nullptr;
+		FMixinProfileBinding* profile = FindProfile(binding, requested_name);
+		if (!binding || !state || !profile)
+		{
+			const FString target_path = binding && binding->TargetClass
+				? binding->TargetClass->GetPathName()
+				: TEXT("<unavailable>");
+			PyErr_Format(
+				PyExc_KeyError,
+				"Python mixin profile '%s' is not registered on %s",
+				TCHAR_TO_UTF8(*requested_name.ToString()),
+				TCHAR_TO_UTF8(*target_path));
+			return nullptr;
+		}
+
+		if (state->ActiveGenerationId == profile->GenerationId)
+		{
+			return profile;
+		}
+
+		if (state->ActiveGenerationId != 0 && !TeardownActiveProfile(registration_id, context))
+		{
+			return nullptr;
+		}
+
+		ue_PyUObject* py_context = ue_get_python_uobject(context);
+		if (!py_context || !py_context->py_dict)
+		{
+			PyErr_SetString(PyExc_RuntimeError, "unable to create the UObject Python wrapper for mixin dispatch");
+			return nullptr;
+		}
+
+		binding = FindBindingById(registration_id);
+		state = binding ? &binding->InstanceStates.FindOrAdd(object_key) : nullptr;
+		profile = FindProfile(binding, requested_name);
+		if (!binding || !state || !profile || binding->bMutating || binding->bUnregistering)
+		{
+			PyErr_SetString(PyExc_RuntimeError, "mixin profile disappeared before initialization");
+			return nullptr;
+		}
+		const uint64 generation_id = profile->GenerationId;
+		PyObject* python_class = profile->PythonClass;
+		Py_INCREF(python_class);
+		state->ActiveProfile = requested_name;
+		state->ActiveGenerationId = generation_id;
+		state->bInitializing = true;
+
+		bool initialized = true;
+		{
+			FUEPyScopedMixinCallback callback_scope;
+			PyObject* initializer = GetLocalClassAttribute(python_class, "__init__");
+			if (initializer)
+			{
+				PyObject* result = PyObject_CallFunctionObjArgs(
+					initializer,
+					reinterpret_cast<PyObject*>(py_context),
+					nullptr);
+				Py_DECREF(initializer);
+				if (!result)
+				{
+					initialized = false;
+				}
+				Py_XDECREF(result);
+			}
+			else if (PyErr_Occurred())
+			{
+				initialized = false;
+			}
+		}
+		Py_DECREF(python_class);
+
+		binding = FindBindingById(registration_id);
+		state = binding ? binding->InstanceStates.Find(object_key) : nullptr;
+		profile = FindProfile(binding, requested_name);
+		if (!binding || !state || !profile || profile->GenerationId != generation_id)
+		{
+			if (!PyErr_Occurred())
+			{
+				PyErr_SetString(PyExc_RuntimeError, "mixin registration changed during profile initialization");
+			}
+			return nullptr;
+		}
+		state->bInitializing = false;
+		if (!initialized)
+		{
+			ClearActiveState(*state);
+			profile->InitializedObjects.Remove(object_key);
+			return nullptr;
+		}
+		profile->InitializedObjects.Add(object_key);
+		return profile;
 	}
 
 	void RestoreFunction(FMixinFunctionBinding& function_binding, UClass* target_class, uint64 registration_id)
@@ -270,17 +666,102 @@ namespace
 		}
 
 		FMixinBinding* binding = found->Get();
-		TeardownInitializedObjects(*binding);
+		if (binding->bUnregistering)
+		{
+			return false;
+		}
+		binding->bUnregistering = true;
+		binding->bMutating = true;
+		const uint64 registration_id = binding->RegistrationId;
+		TArray<TPair<FName, uint64>> profiles_to_teardown;
+		profiles_to_teardown.Reserve(binding->Profiles.Num());
+		for (const TPair<FName, TUniquePtr<FMixinProfileBinding>>& pair : binding->Profiles)
+		{
+			profiles_to_teardown.Add(TPair<FName, uint64>(pair.Key, pair.Value->GenerationId));
+		}
+		for (const TPair<FName, uint64>& profile : profiles_to_teardown)
+		{
+			TeardownProfile(registration_id, profile.Key, profile.Value);
+		}
+
+		binding = FindBindingById(registration_id);
+		if (!binding)
+		{
+			return false;
+		}
 		for (int32 index = binding->Functions.Num() - 1; index >= 0; --index)
 		{
-			RestoreFunction(binding->Functions[index], target_class, binding->RegistrationId);
+			RestoreFunction(binding->Functions[index], target_class, registration_id);
 		}
 		ClearFunctionCaches(target_class);
 
-		GMixinsById.Remove(binding->RegistrationId);
-		Py_CLEAR(binding->PythonClass);
+		GMixinsById.Remove(registration_id);
+		for (TPair<FName, TUniquePtr<FMixinProfileBinding>>& pair : binding->Profiles)
+		{
+			ReleaseProfile(*pair.Value);
+		}
+		binding->Profiles.Empty();
+		binding->InstanceStates.Empty();
 		GMixinsByClass.Remove(target_class);
-		UE_LOG(LogPython, Log, TEXT("Unregistered Python mixin from %s"), *target_class->GetPathName());
+		UE_LOG(LogPython, Log, TEXT("Unregistered Python mixin router from %s"), *target_class->GetPathName());
+		return true;
+	}
+
+	void PruneSupersededBindings(UClass* incoming_class)
+	{
+		TArray<UClass*> stale_classes;
+		for (const TPair<UClass*, TUniquePtr<FMixinBinding>>& pair : GMixinsByClass)
+		{
+			UClass* registered_class = pair.Key;
+			if (!registered_class || registered_class == incoming_class)
+			{
+				continue;
+			}
+			const bool newer_version_exists = registered_class->HasAnyClassFlags(CLASS_NewerVersionExists);
+			bool same_blueprint = false;
+#if WITH_EDITORONLY_DATA
+			same_blueprint = incoming_class && incoming_class->ClassGeneratedBy &&
+				registered_class->ClassGeneratedBy == incoming_class->ClassGeneratedBy;
+#endif
+			if (newer_version_exists || same_blueprint)
+			{
+				stale_classes.Add(registered_class);
+			}
+		}
+		for (UClass* stale_class : stale_classes)
+		{
+			UnregisterBinding(stale_class);
+		}
+	}
+
+	bool ValidateTargetClass(UClass* target_class)
+	{
+		if (!target_class)
+		{
+			PyErr_SetString(PyExc_TypeError, "mixin target must be a UClass");
+			return false;
+		}
+		if (!target_class->HasAnyClassFlags(CLASS_CompiledFromBlueprint))
+		{
+			PyErr_SetString(PyExc_TypeError, "0.7 mixins are limited to Blueprint-generated classes");
+			return false;
+		}
+
+		PruneSupersededBindings(target_class);
+		for (const TPair<UClass*, TUniquePtr<FMixinBinding>>& pair : GMixinsByClass)
+		{
+			UClass* registered_class = pair.Key;
+			if (registered_class != target_class &&
+				(target_class->IsChildOf(registered_class) || registered_class->IsChildOf(target_class)))
+			{
+				PyErr_Format(
+					PyExc_TypeError,
+					"0.7 does not allow simultaneous mixin routers on related Blueprint classes (%s and %s)",
+					TCHAR_TO_UTF8(*target_class->GetName()),
+					TCHAR_TO_UTF8(*registered_class->GetName()));
+				return false;
+			}
+		}
 		return true;
 	}
 
@@ -318,15 +799,10 @@ namespace
 		return true;
 	}
 
-	bool ValidatePythonCallableSignature(
-		PyObject* python_callable,
-		UFunction* original,
-		const FString& function_name)
+	bool ValidatePythonCallableSignature(PyObject* python_callable, UFunction* original, const FString& function_name)
 	{
-		Py_ssize_t positional_count = 1; // The mixed UObject wrapper (self).
-		for (TFieldIterator<FProperty> it(original);
-			it && it->HasAnyPropertyFlags(CPF_Parm);
-			++it)
+		Py_ssize_t positional_count = 1;
+		for (TFieldIterator<FProperty> it(original); it && it->HasAnyPropertyFlags(CPF_Parm); ++it)
 		{
 			if (!it->HasAnyPropertyFlags(CPF_ReturnParm))
 			{
@@ -404,94 +880,16 @@ namespace
 		return false;
 	}
 
-	UPythonFunction* CreateInjectedFunction(
-		FMixinBinding& binding,
-		const FMixinCandidate& candidate,
-		FMixinFunctionBinding& out_binding,
-		FString& error)
+	UFunction* FindOriginalFunction(FMixinBinding* binding, UClass* target_class, FName function_name)
 	{
-		UClass* target_class = binding.TargetClass;
-		UFunction* original = candidate.OriginalFunction;
-		out_binding.PublicName = candidate.PublicName;
-		out_binding.OriginalFunction = original;
-		out_binding.bOriginalOwnedByTarget = original->GetOuter() == target_class;
-
-		if (out_binding.bOriginalOwnedByTarget)
+		if (FMixinFunctionBinding* existing = FindFunctionBinding(binding, function_name))
 		{
-			target_class->RemoveFunctionFromFunctionMap(original);
-			out_binding.StoredOriginalName = MakeUniqueObjectName(
-				target_class,
-				original->GetClass(),
-				FName(*FString::Printf(TEXT("__UEP_Mixin_Original_%llu_%s"), binding.RegistrationId, *candidate.PublicName.ToString())));
-			if (!original->Rename(
-				*out_binding.StoredOriginalName.ToString(),
-				target_class,
-				REN_DontCreateRedirectors | REN_NonTransactional))
-			{
-				target_class->AddFunctionToFunctionMap(original, candidate.PublicName);
-				error = FString::Printf(TEXT("unable to preserve original function %s"), *candidate.PublicName.ToString());
-				return nullptr;
-			}
+			return existing->OriginalFunction;
 		}
-
-		UPythonFunction* injected = NewObject<UPythonFunction>(
-			target_class,
-			candidate.PublicName,
-			RF_Public | RF_Transient | RF_MarkAsNative);
-		if (!injected)
-		{
-			error = FString::Printf(TEXT("unable to allocate injected function %s"), *candidate.PublicName.ToString());
-			if (out_binding.bOriginalOwnedByTarget)
-			{
-				original->Rename(*candidate.PublicName.ToString(), target_class, REN_DontCreateRedirectors | REN_NonTransactional);
-				target_class->AddFunctionToFunctionMap(original, candidate.PublicName);
-			}
-			return nullptr;
-		}
-
-		injected->FunctionFlags = static_cast<EFunctionFlags>(original->FunctionFlags | FUNC_Native);
-		injected->ReturnValueOffset = MAX_uint16;
-		injected->FirstPropertyToInit = nullptr;
-		injected->Script.Add(EX_EndFunctionParms);
-
-		FField::FLinkedListBuilder property_builder(&injected->ChildProperties);
-		for (TFieldIterator<FProperty> it(original); it && it->HasAnyPropertyFlags(CPF_Parm); ++it)
-		{
-			FProperty* cloned = CastField<FProperty>(FField::Duplicate(*it, injected, it->GetFName()));
-			if (!cloned)
-			{
-				error = FString::Printf(TEXT("unable to clone parameter %s.%s"), *candidate.PublicName.ToString(), *it->GetName());
-				const FName discarded_name = MakeUniqueObjectName(
-					target_class,
-					UPythonFunction::StaticClass(),
-					FName(*FString::Printf(TEXT("__UEP_Mixin_Failed_%llu_%s"), binding.RegistrationId, *candidate.PublicName.ToString())));
-				injected->Rename(*discarded_name.ToString(), target_class, REN_DontCreateRedirectors | REN_NonTransactional);
-				injected->MarkAsGarbage();
-				if (out_binding.bOriginalOwnedByTarget)
-				{
-					original->Rename(*candidate.PublicName.ToString(), target_class, REN_DontCreateRedirectors | REN_NonTransactional);
-					target_class->AddFunctionToFunctionMap(original, candidate.PublicName);
-				}
-				return nullptr;
-			}
-			cloned->Next = nullptr;
-			property_builder.AppendNoTerminate(*cloned);
-		}
-
-		injected->StaticLink(true);
-		injected->SetNativeFunc((FNativeFuncPtr)&UPythonFunction::CallPythonCallable);
-		injected->SetPyCallable(candidate.PythonCallable);
-		injected->SetMixinRegistration(binding.RegistrationId, candidate.PublicName);
-		injected->AddToRoot();
-
-		injected->Next = target_class->Children;
-		target_class->Children = injected;
-		target_class->AddFunctionToFunctionMap(injected, candidate.PublicName);
-		out_binding.InjectedFunction = injected;
-		return injected;
+		return target_class->FindFunctionByName(function_name);
 	}
 
-	bool CollectCandidates(UClass* target_class, PyObject* python_class, TArray<FMixinCandidate>& candidates)
+	bool CollectCandidates(UClass* target_class, FMixinBinding* binding, PyObject* python_class, TArray<FMixinCandidate>& candidates)
 	{
 		PyObject* class_dict = PyObject_GetAttrString(python_class, "__dict__");
 		if (!class_dict)
@@ -552,7 +950,18 @@ namespace
 			}
 
 			const FName function_name(*effective_name);
-			UFunction* original = target_class->FindFunctionByName(function_name);
+			if (function_name == MixinSetFunctionName || function_name == MixinProfileFunctionName)
+			{
+				if (explicit_override)
+				{
+					Py_DECREF(items);
+					PyErr_Format(PyExc_TypeError, "%s is reserved for UEP mixin routing", TCHAR_TO_UTF8(*effective_name));
+					return false;
+				}
+				continue;
+			}
+
+			UFunction* original = FindOriginalFunction(binding, target_class, function_name);
 			if (!original)
 			{
 				if (explicit_override)
@@ -613,6 +1022,581 @@ namespace
 			candidate.PythonCallable = nullptr;
 		}
 	}
+
+	UPythonFunction* CreateInjectedFunction(
+		FMixinBinding& binding,
+		FName public_name,
+		UFunction* original,
+		FMixinFunctionBinding& out_binding,
+		FString& error)
+	{
+		UClass* target_class = binding.TargetClass;
+		out_binding.PublicName = public_name;
+		out_binding.OriginalFunction = original;
+		out_binding.bOriginalOwnedByTarget = original->GetOuter() == target_class;
+
+		if (out_binding.bOriginalOwnedByTarget)
+		{
+			target_class->RemoveFunctionFromFunctionMap(original);
+			out_binding.StoredOriginalName = MakeUniqueObjectName(
+				target_class,
+				original->GetClass(),
+				FName(*FString::Printf(TEXT("__UEP_Mixin_Original_%llu_%s"), binding.RegistrationId, *public_name.ToString())));
+			if (!original->Rename(
+				*out_binding.StoredOriginalName.ToString(),
+				target_class,
+				REN_DontCreateRedirectors | REN_NonTransactional))
+			{
+				target_class->AddFunctionToFunctionMap(original, public_name);
+				error = FString::Printf(TEXT("unable to preserve original function %s"), *public_name.ToString());
+				return nullptr;
+			}
+		}
+
+		UPythonFunction* injected = NewObject<UPythonFunction>(
+			target_class,
+			public_name,
+			RF_Public | RF_Transient | RF_MarkAsNative);
+		if (!injected)
+		{
+			error = FString::Printf(TEXT("unable to allocate injected function %s"), *public_name.ToString());
+			if (out_binding.bOriginalOwnedByTarget)
+			{
+				original->Rename(*public_name.ToString(), target_class, REN_DontCreateRedirectors | REN_NonTransactional);
+				target_class->AddFunctionToFunctionMap(original, public_name);
+			}
+			return nullptr;
+		}
+
+		injected->FunctionFlags = static_cast<EFunctionFlags>(original->FunctionFlags | FUNC_Native);
+		injected->ReturnValueOffset = MAX_uint16;
+		injected->FirstPropertyToInit = nullptr;
+		injected->Script.Add(EX_EndFunctionParms);
+
+		FField::FLinkedListBuilder property_builder(&injected->ChildProperties);
+		for (TFieldIterator<FProperty> it(original); it && it->HasAnyPropertyFlags(CPF_Parm); ++it)
+		{
+			FProperty* cloned = CastField<FProperty>(FField::Duplicate(*it, injected, it->GetFName()));
+			if (!cloned)
+			{
+				error = FString::Printf(TEXT("unable to clone parameter %s.%s"), *public_name.ToString(), *it->GetName());
+				const FName discarded_name = MakeUniqueObjectName(
+					target_class,
+					UPythonFunction::StaticClass(),
+					FName(*FString::Printf(TEXT("__UEP_Mixin_Failed_%llu_%s"), binding.RegistrationId, *public_name.ToString())));
+				injected->Rename(*discarded_name.ToString(), target_class, REN_DontCreateRedirectors | REN_NonTransactional);
+				injected->MarkAsGarbage();
+				if (out_binding.bOriginalOwnedByTarget)
+				{
+					original->Rename(*public_name.ToString(), target_class, REN_DontCreateRedirectors | REN_NonTransactional);
+					target_class->AddFunctionToFunctionMap(original, public_name);
+				}
+				return nullptr;
+			}
+			cloned->Next = nullptr;
+			property_builder.AppendNoTerminate(*cloned);
+		}
+
+		injected->StaticLink(true);
+		injected->SetNativeFunc((FNativeFuncPtr)&UPythonFunction::CallPythonCallable);
+		injected->SetPyCallable(nullptr);
+		injected->SetMixinRegistration(binding.RegistrationId, public_name);
+		injected->AddToRoot();
+		injected->Next = target_class->Children;
+		target_class->Children = injected;
+		target_class->AddFunctionToFunctionMap(injected, public_name);
+		out_binding.InjectedFunction = injected;
+		return injected;
+	}
+
+	void PruneUnusedFunctions(FMixinBinding& binding)
+	{
+		for (int32 index = binding.Functions.Num() - 1; index >= 0; --index)
+		{
+			const FName function_name = binding.Functions[index].PublicName;
+			bool used = false;
+			for (const TPair<FName, TUniquePtr<FMixinProfileBinding>>& pair : binding.Profiles)
+			{
+				if (pair.Value->Callables.Contains(function_name))
+				{
+					used = true;
+					break;
+				}
+			}
+			if (!used)
+			{
+				RestoreFunction(binding.Functions[index], binding.TargetClass, binding.RegistrationId);
+				binding.Functions.RemoveAt(index);
+			}
+		}
+	}
+
+	bool AddOrReplaceProfile(FMixinBinding& binding, FName profile_name, PyObject* python_class, bool make_default)
+	{
+		if (binding.bMutating || binding.bUnregistering)
+		{
+			PyErr_SetString(PyExc_RuntimeError, "mixin profile registration is already being modified");
+			return false;
+		}
+		TGuardValue<bool> mutation_guard(binding.bMutating, true);
+
+		TArray<FMixinCandidate> candidates;
+		if (!CollectCandidates(binding.TargetClass, &binding, python_class, candidates))
+		{
+			ReleaseCandidates(candidates);
+			return false;
+		}
+
+		const int32 original_function_count = binding.Functions.Num();
+		FString error;
+		for (const FMixinCandidate& candidate : candidates)
+		{
+			if (FindFunctionBinding(&binding, candidate.PublicName))
+			{
+				continue;
+			}
+			FMixinFunctionBinding function_binding;
+			if (!CreateInjectedFunction(
+				binding,
+				candidate.PublicName,
+				candidate.OriginalFunction,
+				function_binding,
+				error))
+			{
+				for (int32 index = binding.Functions.Num() - 1; index >= original_function_count; --index)
+				{
+					RestoreFunction(binding.Functions[index], binding.TargetClass, binding.RegistrationId);
+					binding.Functions.RemoveAt(index);
+				}
+				ClearFunctionCaches(binding.TargetClass);
+				ReleaseCandidates(candidates);
+				PyErr_Format(PyExc_RuntimeError, "%s", TCHAR_TO_UTF8(*error));
+				return false;
+			}
+			binding.Functions.Add(function_binding);
+		}
+
+		if (TUniquePtr<FMixinProfileBinding>* existing = binding.Profiles.Find(profile_name))
+		{
+			TeardownProfile(binding.RegistrationId, profile_name, (*existing)->GenerationId);
+			ReleaseProfile(*existing->Get());
+			binding.Profiles.Remove(profile_name);
+		}
+
+		TUniquePtr<FMixinProfileBinding> profile = MakeUnique<FMixinProfileBinding>();
+		profile->GenerationId = GNextMixinProfileGenerationId++;
+		profile->ProfileName = profile_name;
+		profile->PythonClass = python_class;
+		Py_INCREF(python_class);
+		for (FMixinCandidate& candidate : candidates)
+		{
+			profile->Callables.Add(candidate.PublicName, candidate.PythonCallable);
+			candidate.PythonCallable = nullptr;
+		}
+		ReleaseCandidates(candidates);
+		const int32 profile_function_count = profile->Callables.Num();
+		binding.Profiles.Add(profile_name, MoveTemp(profile));
+		PruneUnusedFunctions(binding);
+
+		if (binding.DefaultProfile.IsNone() || make_default)
+		{
+			binding.DefaultProfile = profile_name;
+		}
+		ClearFunctionCaches(binding.TargetClass);
+
+		UE_LOG(
+			LogPython,
+			Log,
+			TEXT("Registered Python mixin profile %s on %s (%d profile functions, %d routed functions)"),
+			*profile_name.ToString(),
+			*binding.TargetClass->GetPathName(),
+			profile_function_count,
+			binding.Functions.Num());
+		return true;
+	}
+
+	FMixinBinding* RegisterProfileInternal(UClass* target_class, FName profile_name, PyObject* python_class, bool make_default)
+	{
+		if (!ValidateTargetClass(target_class))
+		{
+			return nullptr;
+		}
+		if (profile_name.IsNone())
+		{
+			PyErr_SetString(PyExc_ValueError, "mixin profile name cannot be empty");
+			return nullptr;
+		}
+		if (!PyType_Check(python_class))
+		{
+			PyErr_SetString(PyExc_TypeError, "mixin profile expects a Python class");
+			return nullptr;
+		}
+
+		FMixinBinding* binding = FindBindingForClass(target_class);
+		bool created_binding = false;
+		if (!binding || binding->TargetClass != target_class)
+		{
+			TUniquePtr<FMixinBinding> new_binding = MakeUnique<FMixinBinding>();
+			new_binding->RegistrationId = GNextMixinRegistrationId++;
+			new_binding->TargetClass = target_class;
+			binding = new_binding.Get();
+			GMixinsById.Add(binding->RegistrationId, binding);
+			GMixinsByClass.Add(target_class, MoveTemp(new_binding));
+			created_binding = true;
+		}
+
+		if (!AddOrReplaceProfile(*binding, profile_name, python_class, make_default))
+		{
+			if (created_binding)
+			{
+				UnregisterBinding(target_class);
+			}
+			return nullptr;
+		}
+		return binding;
+	}
+
+	UClass* PythonObjectAsClass(PyObject* value)
+	{
+		ue_PyUObject* py_class = ue_is_pyuobject(value);
+		return py_class ? Cast<UClass>(py_class->ue_object) : nullptr;
+	}
+
+	UObject* PythonObjectAsUObject(PyObject* value)
+	{
+		ue_PyUObject* py_object = ue_is_pyuobject(value);
+		return py_object ? py_object->ue_object : nullptr;
+	}
+
+	bool PythonObjectAsProfileName(PyObject* value, FName& out_name, bool allow_none = false)
+	{
+		if (allow_none && value == Py_None)
+		{
+			out_name = NAME_None;
+			return true;
+		}
+		if (!PyUnicodeOrString_Check(value))
+		{
+			PyErr_SetString(PyExc_TypeError, "mixin profile name must be a string");
+			return false;
+		}
+		const char* utf8 = UEPyUnicode_AsUTF8(value);
+		if (!utf8)
+		{
+			return false;
+		}
+		out_name = FName(UTF8_TO_TCHAR(utf8));
+		if (!allow_none && out_name.IsNone())
+		{
+			PyErr_SetString(PyExc_ValueError, "mixin profile name cannot be empty");
+			return false;
+		}
+		return true;
+	}
+
+	PyObject* LoadPythonClass(const FUEPPythonMixinProfile& entry)
+	{
+		if (entry.PythonModule.IsEmpty() || entry.PythonClass.IsEmpty())
+		{
+			PyErr_Format(
+				PyExc_ValueError,
+				"mixin profile '%s' requires PythonModule and PythonClass",
+				TCHAR_TO_UTF8(*entry.ProfileName.ToString()));
+			return nullptr;
+		}
+
+		PyObject* current = PyImport_ImportModule(TCHAR_TO_UTF8(*entry.PythonModule));
+		if (!current)
+		{
+			return nullptr;
+		}
+		TArray<FString> attribute_path;
+		entry.PythonClass.ParseIntoArray(attribute_path, TEXT("."), true);
+		for (const FString& attribute : attribute_path)
+		{
+			PyObject* next = PyObject_GetAttrString(current, TCHAR_TO_UTF8(*attribute));
+			Py_DECREF(current);
+			if (!next)
+			{
+				return nullptr;
+			}
+			current = next;
+		}
+		if (!PyType_Check(current))
+		{
+			Py_DECREF(current);
+			PyErr_Format(
+				PyExc_TypeError,
+				"%s.%s is not a Python class",
+				TCHAR_TO_UTF8(*entry.PythonModule),
+				TCHAR_TO_UTF8(*entry.PythonClass));
+			return nullptr;
+		}
+		return current;
+	}
+
+	void ReleaseLoadedProfiles(TArray<FLoadedProfile>& profiles)
+	{
+		for (FLoadedProfile& profile : profiles)
+		{
+			Py_XDECREF(profile.PythonClass);
+			profile.PythonClass = nullptr;
+		}
+	}
+
+	bool DeclaresMixinInterface(const UClass* target_class)
+	{
+		if (!target_class)
+		{
+			return false;
+		}
+		const UClass* interface_class = UUEPPythonMixinInterface::StaticClass();
+		for (const FImplementedInterface& implemented : target_class->Interfaces)
+		{
+			if (implemented.Class == interface_class)
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
+	bool IsDiscoverableMixinClass(UClass* target_class)
+	{
+		if (!target_class ||
+			!target_class->HasAnyClassFlags(CLASS_CompiledFromBlueprint) ||
+			target_class->HasAnyClassFlags(CLASS_NewerVersionExists) ||
+			target_class->HasAnyFlags(RF_Transient) ||
+			target_class->GetOutermost() == GetTransientPackage() ||
+			!DeclaresMixinInterface(target_class))
+		{
+			return false;
+		}
+
+		const FString class_name = target_class->GetName();
+		return !class_name.StartsWith(TEXT("SKEL_")) &&
+			!class_name.StartsWith(TEXT("REINST_")) &&
+			!class_name.StartsWith(TEXT("TRASHCLASS_"));
+	}
+
+	bool RegisterDeclaredMixinInternal(UClass* target_class, bool error_if_missing)
+	{
+		if (!IsDiscoverableMixinClass(target_class))
+		{
+			if (error_if_missing)
+			{
+				PyErr_SetString(
+					PyExc_TypeError,
+					"target must be a persistent Blueprint class that directly declares UEPPythonMixinInterface");
+			}
+			return false;
+		}
+
+		const TWeakObjectPtr<UClass> declaring_key(target_class);
+		if (GDeclaringClasses.Contains(declaring_key))
+		{
+			return false;
+		}
+		GDeclaringClasses.Add(declaring_key);
+
+		UObject* cdo = target_class->GetDefaultObject();
+		UUEPPythonMixinSet* mixin_set = nullptr;
+		if (cdo)
+		{
+			FUEPyScopedMixinCallback callback_scope;
+			mixin_set = IUEPPythonMixinInterface::Execute_GetPythonMixinSet(cdo);
+		}
+		if (!mixin_set)
+		{
+			GDeclaringClasses.Remove(declaring_key);
+			if (error_if_missing)
+			{
+				PyErr_SetString(PyExc_ValueError, "UEPPythonMixinInterface returned no Mixin Set on the class default object");
+			}
+			return false;
+		}
+
+		if (TUniquePtr<FMixinBinding>* existing = GMixinsByClass.Find(target_class))
+		{
+			if ((*existing)->DeclaredSet.Get() == mixin_set)
+			{
+				GDeclaringClasses.Remove(declaring_key);
+				return true;
+			}
+			if (!(*existing)->DeclaredSet.IsValid())
+			{
+				GDeclaringClasses.Remove(declaring_key);
+				if (error_if_missing)
+				{
+					PyErr_SetString(PyExc_RuntimeError, "target class already has a manually registered mixin router");
+				}
+				return false;
+			}
+		}
+
+		TArray<FLoadedProfile> loaded_profiles;
+		TSet<FName> seen_names;
+		for (const FUEPPythonMixinProfile& entry : mixin_set->Profiles)
+		{
+			if (entry.ProfileName.IsNone())
+			{
+				PyErr_SetString(PyExc_ValueError, "Mixin Set contains an empty profile name");
+				ReleaseLoadedProfiles(loaded_profiles);
+				GDeclaringClasses.Remove(declaring_key);
+				return false;
+			}
+			if (seen_names.Contains(entry.ProfileName))
+			{
+				PyErr_Format(
+					PyExc_ValueError,
+					"Mixin Set contains duplicate profile '%s'",
+					TCHAR_TO_UTF8(*entry.ProfileName.ToString()));
+				ReleaseLoadedProfiles(loaded_profiles);
+				GDeclaringClasses.Remove(declaring_key);
+				return false;
+			}
+			PyObject* python_class = LoadPythonClass(entry);
+			if (!python_class)
+			{
+				ReleaseLoadedProfiles(loaded_profiles);
+				GDeclaringClasses.Remove(declaring_key);
+				return false;
+			}
+			FLoadedProfile& loaded = loaded_profiles.AddDefaulted_GetRef();
+			loaded.ProfileName = entry.ProfileName;
+			loaded.PythonClass = python_class;
+			seen_names.Add(entry.ProfileName);
+		}
+
+		if (loaded_profiles.IsEmpty())
+		{
+			PyErr_SetString(PyExc_ValueError, "Mixin Set contains no profiles");
+			GDeclaringClasses.Remove(declaring_key);
+			return false;
+		}
+		FName default_profile = mixin_set->DefaultProfile;
+		if (default_profile.IsNone() && loaded_profiles.Num() == 1)
+		{
+			default_profile = loaded_profiles[0].ProfileName;
+		}
+		if (default_profile.IsNone() || !seen_names.Contains(default_profile))
+		{
+			PyErr_Format(
+				PyExc_ValueError,
+				"Mixin Set default profile '%s' is not declared",
+				TCHAR_TO_UTF8(*default_profile.ToString()));
+			ReleaseLoadedProfiles(loaded_profiles);
+			GDeclaringClasses.Remove(declaring_key);
+			return false;
+		}
+
+		if (GMixinsByClass.Contains(target_class))
+		{
+			UnregisterBinding(target_class);
+		}
+		FMixinBinding* binding = nullptr;
+		for (FLoadedProfile& loaded : loaded_profiles)
+		{
+			binding = RegisterProfileInternal(
+				target_class,
+				loaded.ProfileName,
+				loaded.PythonClass,
+				loaded.ProfileName == default_profile);
+			if (!binding)
+			{
+				UnregisterBinding(target_class);
+				ReleaseLoadedProfiles(loaded_profiles);
+				GDeclaringClasses.Remove(declaring_key);
+				return false;
+			}
+		}
+		ReleaseLoadedProfiles(loaded_profiles);
+		binding->DeclaredSet = mixin_set;
+		binding->DefaultProfile = default_profile;
+		GDeclaringClasses.Remove(declaring_key);
+		UE_LOG(
+			LogPython,
+			Log,
+			TEXT("Registered declared Python Mixin Set %s on %s"),
+			*mixin_set->GetPathName(),
+			*target_class->GetPathName());
+		return true;
+	}
+
+	int32 RegisterLoadedMixinInterfacesInternal()
+	{
+		int32 registered_count = 0;
+		for (TObjectIterator<UClass> it; it; ++it)
+		{
+			UClass* target_class = *it;
+			if (!IsDiscoverableMixinClass(target_class))
+			{
+				continue;
+			}
+			const bool had_binding = GMixinsByClass.Contains(target_class);
+			if (RegisterDeclaredMixinInternal(target_class, false) && !had_binding)
+			{
+				++registered_count;
+			}
+			else if (PyErr_Occurred())
+			{
+				unreal_engine_py_log_error();
+			}
+		}
+		return registered_count;
+	}
+
+	void RegisterMixinInterfacesInPackage(UPackage* loaded_package)
+	{
+		if (!loaded_package)
+		{
+			return;
+		}
+
+		TArray<UObject*> loaded_objects;
+		GetObjectsWithPackage(
+			loaded_package,
+			loaded_objects,
+			EGetObjectsFlags::IncludeNestedObjects,
+			RF_Transient);
+		for (UObject* loaded_object : loaded_objects)
+		{
+			UClass* target_class = Cast<UClass>(loaded_object);
+			if (!IsDiscoverableMixinClass(target_class))
+			{
+				continue;
+			}
+			RegisterDeclaredMixinInternal(target_class, false);
+			if (PyErr_Occurred())
+			{
+				unreal_engine_py_log_error();
+			}
+		}
+	}
+
+	void OnMixinPackageLoadCompleted(UPackage* loaded_package)
+	{
+		if (IsRunningCookCommandlet() || !loaded_package || !Py_IsInitialized())
+		{
+			return;
+		}
+		if (!IsInGameThread() || FUEPyScopedMixinCallback::IsActive() || GMixinMutationDepth > 0)
+		{
+			const TWeakObjectPtr<UPackage> weak_package(loaded_package);
+			AsyncTask(ENamedThreads::GameThread, [weak_package]()
+			{
+				if (GMixinPackageLoadedHandle.IsValid())
+				{
+					OnMixinPackageLoadCompleted(weak_package.Get());
+				}
+			});
+			return;
+		}
+
+		FScopePythonGIL gil;
+		FScopedMixinMutation mutation_scope;
+		RegisterMixinInterfacesInPackage(loaded_package);
+	}
 }
 
 void UPythonFunction::SetMixinRegistration(uint64 registration_id, FName function_name)
@@ -627,20 +1611,50 @@ void UPythonFunction::ClearMixinRegistration()
 	mixin_function_name = NAME_None;
 }
 
-bool ue_py_prepare_mixin_call(UPythonFunction* function, UObject* context)
+EUEPyMixinDispatch ue_py_resolve_mixin_call(
+	UPythonFunction* function,
+	UObject* context,
+	PyObject*& out_callable,
+	UFunction*& out_original)
 {
+	out_callable = nullptr;
+	out_original = nullptr;
 	if (!function || !function->IsMixinFunction())
 	{
-		return true;
+		return EUEPyMixinDispatch::NotMixin;
 	}
 
 	FMixinBinding** found = GMixinsById.Find(function->GetMixinRegistrationId());
 	if (!found || !*found)
 	{
 		PyErr_SetString(PyExc_RuntimeError, "Python mixin registration is no longer active");
-		return false;
+		return EUEPyMixinDispatch::Error;
 	}
-	return EnsureInstanceInitialized(*found, context);
+	FMixinBinding* binding = *found;
+	FMixinProfileBinding* profile = ResolveAndInitializeProfile(binding, context);
+	if (!profile)
+	{
+		return EUEPyMixinDispatch::Error;
+	}
+
+	if (PyObject** callable = profile->Callables.Find(function->GetMixinFunctionName()))
+	{
+		out_callable = *callable;
+		Py_INCREF(out_callable);
+		return EUEPyMixinDispatch::Python;
+	}
+
+	FMixinFunctionBinding* function_binding = FindFunctionBinding(binding, function->GetMixinFunctionName());
+	if (!function_binding || !function_binding->OriginalFunction)
+	{
+		PyErr_Format(
+			PyExc_RuntimeError,
+			"mixin router lost original function %s",
+			TCHAR_TO_UTF8(*function->GetMixinFunctionName().ToString()));
+		return EUEPyMixinDispatch::Error;
+	}
+	out_original = function_binding->OriginalFunction;
+	return EUEPyMixinDispatch::Original;
 }
 
 PyObject* ue_py_get_mixin_attribute(ue_PyUObject* self, PyObject* attr_name)
@@ -655,12 +1669,44 @@ PyObject* ue_py_get_mixin_attribute(ue_PyUObject* self, PyObject* attr_name)
 	{
 		return nullptr;
 	}
-	if (!EnsureInstanceInitialized(binding, self->ue_object))
+
+	// Attribute lookup is also used by ordinary Python getattr(..., default)
+	// inside __init__. Re-entering the full resolver there would recursively
+	// initialize the same object. While initialization is active, expose the
+	// already selected class for helper lookup without running lifecycle again;
+	// unresolved/teardown states simply behave like a missing Python attribute.
+	const TWeakObjectPtr<UObject> object_key(self->ue_object);
+	FMixinInstanceState* state = binding->InstanceStates.Find(object_key);
+	FMixinProfileBinding* profile = nullptr;
+	if (state && state->bInitializing)
+	{
+		profile = FindProfile(binding, state->ActiveProfile);
+		if (!profile || profile->GenerationId != state->ActiveGenerationId)
+		{
+			return nullptr;
+		}
+	}
+	else if (state && (state->bResolving || state->bTearingDown))
+	{
+		return nullptr;
+	}
+	else
+	{
+		profile = ResolveAndInitializeProfile(binding, self->ue_object);
+	}
+	if (!profile)
 	{
 		return nullptr;
 	}
 
-	PyObject* value = PyObject_GetAttr(binding->PythonClass, attr_name);
+	PyObject* python_class = profile->PythonClass;
+	Py_INCREF(python_class);
+	PyObject* value = nullptr;
+	{
+		FUEPyScopedMixinCallback callback_scope;
+		value = PyObject_GetAttr(python_class, attr_name);
+	}
+	Py_DECREF(python_class);
 	if (!value)
 	{
 		if (PyErr_ExceptionMatches(PyExc_AttributeError))
@@ -690,118 +1736,126 @@ PyObject* py_unreal_engine_register_mixin(PyObject* self, PyObject* args)
 	{
 		return PyErr_Format(PyExc_RuntimeError, "register_mixin must run on Unreal's game thread");
 	}
-
-	ue_PyUObject* py_target_class = ue_is_pyuobject(py_target);
-	UClass* target_class = py_target_class ? Cast<UClass>(py_target_class->ue_object) : nullptr;
-	if (!target_class)
+	if (!EnsureMixinRegistryMutationAllowed("register_mixin"))
 	{
-		return PyErr_Format(PyExc_TypeError, "register_mixin target must be a UClass");
+		return nullptr;
 	}
-	if (!target_class->HasAnyClassFlags(CLASS_CompiledFromBlueprint))
+	FScopedMixinMutation mutation_scope;
+
+	UClass* target_class = PythonObjectAsClass(py_target);
+	if (!ValidateTargetClass(target_class))
 	{
-		return PyErr_Format(PyExc_TypeError, "0.7 mixins are limited to Blueprint-generated classes");
+		return nullptr;
 	}
 	if (!PyType_Check(python_class))
 	{
 		return PyErr_Format(PyExc_TypeError, "register_mixin expects a Python class");
 	}
-	for (const TPair<UClass*, TUniquePtr<FMixinBinding>>& pair : GMixinsByClass)
-	{
-		UClass* registered_class = pair.Key;
-		if (registered_class != target_class &&
-			(target_class->IsChildOf(registered_class) || registered_class->IsChildOf(target_class)))
-		{
-			return PyErr_Format(
-				PyExc_TypeError,
-				"0.7 does not allow simultaneous mixins on related Blueprint classes (%s and %s)",
-				TCHAR_TO_UTF8(*target_class->GetName()),
-				TCHAR_TO_UTF8(*registered_class->GetName()));
-		}
-	}
 
 	TArray<FMixinCandidate> candidates;
-	if (!CollectCandidates(target_class, python_class, candidates))
+	FMixinBinding* current = FindBindingForClass(target_class);
+	if (!CollectCandidates(target_class, current, python_class, candidates))
 	{
 		ReleaseCandidates(candidates);
 		return nullptr;
 	}
-
-	// Validate against the currently visible signatures before replacing an
-	// active generation. A bad reload therefore leaves the working mixin intact.
+	ReleaseCandidates(candidates);
 	if (GMixinsByClass.Contains(target_class))
 	{
 		UnregisterBinding(target_class);
-		for (FMixinCandidate& candidate : candidates)
-		{
-			candidate.OriginalFunction = target_class->FindFunctionByName(candidate.PublicName);
-			if (!candidate.OriginalFunction)
-			{
-				ReleaseCandidates(candidates);
-				return PyErr_Format(
-					PyExc_RuntimeError,
-					"target function %s disappeared while replacing its mixin",
-					TCHAR_TO_UTF8(*candidate.PublicName.ToString()));
-			}
-		}
 	}
 
-	TUniquePtr<FMixinBinding> binding = MakeUnique<FMixinBinding>();
-	binding->RegistrationId = GNextMixinRegistrationId++;
-	binding->TargetClass = target_class;
-	binding->PythonClass = python_class;
-	Py_INCREF(python_class);
-
-	FString error;
-	for (const FMixinCandidate& candidate : candidates)
+	FMixinBinding* binding = RegisterProfileInternal(
+		target_class,
+		DefaultMixinProfileName,
+		python_class,
+		true);
+	if (!binding)
 	{
-		FMixinFunctionBinding function_binding;
-		if (!CreateInjectedFunction(*binding, candidate, function_binding, error))
-		{
-			for (int32 index = binding->Functions.Num() - 1; index >= 0; --index)
-			{
-				RestoreFunction(binding->Functions[index], target_class, binding->RegistrationId);
-			}
-			ClearFunctionCaches(target_class);
-			Py_CLEAR(binding->PythonClass);
-			ReleaseCandidates(candidates);
-			return PyErr_Format(PyExc_RuntimeError, "%s", TCHAR_TO_UTF8(*error));
-		}
-		binding->Functions.Add(function_binding);
+		return nullptr;
 	}
-	ReleaseCandidates(candidates);
-	ClearFunctionCaches(target_class);
-
-	FMixinBinding* binding_ptr = binding.Get();
-	GMixinsById.Add(binding->RegistrationId, binding_ptr);
-	GMixinsByClass.Add(target_class, MoveTemp(binding));
-	FString python_class_name = UTF8_TO_TCHAR(Py_TYPE(python_class)->tp_name);
-	PyObject* py_class_name = PyObject_GetAttrString(python_class, "__name__");
-	if (py_class_name && PyUnicodeOrString_Check(py_class_name))
-	{
-		const char* class_name_utf8 = UEPyUnicode_AsUTF8(py_class_name);
-		if (class_name_utf8)
-		{
-			python_class_name = UTF8_TO_TCHAR(class_name_utf8);
-		}
-	}
-	Py_XDECREF(py_class_name);
-	PyErr_Clear();
-	UE_LOG(
-		LogPython,
-		Log,
-		TEXT("Registered Python mixin %s on %s (%d functions)"),
-		*python_class_name,
-		*target_class->GetPathName(),
-		binding_ptr->Functions.Num());
-
 	Py_INCREF(python_class);
 	return python_class;
 }
 
-PyObject* py_unreal_engine_mixin(PyObject* self, PyObject* args)
+PyObject* py_unreal_engine_register_mixin_profile(PyObject* self, PyObject* args, PyObject* kwargs)
 {
 	PyObject* py_target = nullptr;
-	if (!PyArg_ParseTuple(args, "O:mixin", &py_target))
+	PyObject* py_profile_name = nullptr;
+	PyObject* python_class = nullptr;
+	int make_default = 0;
+	static char* keywords[] = {
+		(char*)"target_class",
+		(char*)"profile",
+		(char*)"python_class",
+		(char*)"make_default",
+		nullptr,
+	};
+	if (!PyArg_ParseTupleAndKeywords(
+		args,
+		kwargs,
+		"OOO|p:register_mixin_profile",
+		keywords,
+		&py_target,
+		&py_profile_name,
+		&python_class,
+		&make_default))
+	{
+		return nullptr;
+	}
+	if (!IsInGameThread())
+	{
+		return PyErr_Format(PyExc_RuntimeError, "register_mixin_profile must run on Unreal's game thread");
+	}
+	if (!EnsureMixinRegistryMutationAllowed("register_mixin_profile"))
+	{
+		return nullptr;
+	}
+	FScopedMixinMutation mutation_scope;
+
+	FName profile_name;
+	if (!PythonObjectAsProfileName(py_profile_name, profile_name))
+	{
+		return nullptr;
+	}
+	FMixinBinding* binding = RegisterProfileInternal(
+		PythonObjectAsClass(py_target),
+		profile_name,
+		python_class,
+		make_default != 0);
+	if (!binding)
+	{
+		return nullptr;
+	}
+	Py_INCREF(python_class);
+	return python_class;
+}
+
+PyObject* py_unreal_engine_mixin(PyObject* self, PyObject* args, PyObject* kwargs)
+{
+	PyObject* py_target = nullptr;
+	PyObject* py_profile_name = Py_None;
+	int make_default = 0;
+	static char* keywords[] = {
+		(char*)"target_class",
+		(char*)"profile",
+		(char*)"make_default",
+		nullptr,
+	};
+	if (!PyArg_ParseTupleAndKeywords(
+		args,
+		kwargs,
+		"O|Op:mixin",
+		keywords,
+		&py_target,
+		&py_profile_name,
+		&make_default))
+	{
+		return nullptr;
+	}
+
+	FName profile_name;
+	if (!PythonObjectAsProfileName(py_profile_name, profile_name, true))
 	{
 		return nullptr;
 	}
@@ -817,25 +1871,303 @@ PyObject* py_unreal_engine_mixin(PyObject* self, PyObject* args)
 	{
 		return nullptr;
 	}
-	// Module-level functions in UEP are installed with a null ``self`` (see
-	// unreal_engine_init_py_module), so resolve the sibling API from the module
-	// instead of dereferencing ``self`` here.
-	PyObject* unreal_engine_module = PyImport_AddModule("unreal_engine"); // Borrowed.
-	if (!unreal_engine_module)
-	{
-		Py_DECREF(partial);
-		return nullptr;
-	}
-	PyObject* register_function = PyObject_GetAttrString(unreal_engine_module, "register_mixin");
+
+	PyObject* unreal_engine_module = PyImport_AddModule("unreal_engine");
+	const char* function_name = profile_name.IsNone() ? "register_mixin" : "register_mixin_profile";
+	PyObject* register_function = unreal_engine_module
+		? PyObject_GetAttrString(unreal_engine_module, function_name)
+		: nullptr;
 	if (!register_function)
 	{
 		Py_DECREF(partial);
 		return nullptr;
 	}
-	PyObject* decorator = PyObject_CallFunctionObjArgs(partial, register_function, py_target, nullptr);
+
+	PyObject* partial_args = profile_name.IsNone()
+		? PyTuple_Pack(2, register_function, py_target)
+		: PyTuple_Pack(3, register_function, py_target, py_profile_name);
+	PyObject* partial_kwargs = nullptr;
+	if (!profile_name.IsNone() && make_default)
+	{
+		partial_kwargs = Py_BuildValue("{s:O}", "make_default", Py_True);
+	}
+	PyObject* decorator = partial_args
+		? PyObject_Call(partial, partial_args, partial_kwargs)
+		: nullptr;
+	Py_XDECREF(partial_kwargs);
+	Py_XDECREF(partial_args);
 	Py_DECREF(register_function);
 	Py_DECREF(partial);
 	return decorator;
+}
+
+PyObject* py_unreal_engine_set_mixin_profile(PyObject* self, PyObject* args)
+{
+	PyObject* py_target = nullptr;
+	PyObject* py_profile_name = nullptr;
+	if (!PyArg_ParseTuple(args, "OO:set_mixin_profile", &py_target, &py_profile_name))
+	{
+		return nullptr;
+	}
+	if (!IsInGameThread())
+	{
+		return PyErr_Format(PyExc_RuntimeError, "set_mixin_profile must run on Unreal's game thread");
+	}
+	if (!EnsureMixinRegistryMutationAllowed("set_mixin_profile"))
+	{
+		return nullptr;
+	}
+	FScopedMixinMutation mutation_scope;
+
+	UObject* target = PythonObjectAsUObject(py_target);
+	FName profile_name;
+	if (!target || !PythonObjectAsProfileName(py_profile_name, profile_name))
+	{
+		return target ? nullptr : PyErr_Format(PyExc_TypeError, "set_mixin_profile target must be a UObject instance");
+	}
+	FMixinBinding* binding = FindBindingForClass(target->GetClass());
+	if (!binding)
+	{
+		return PyErr_Format(PyExc_RuntimeError, "target object has no active mixin router");
+	}
+	FMixinProfileBinding* requested_profile = FindProfile(binding, profile_name);
+	if (!requested_profile)
+	{
+		return PyErr_Format(
+			PyExc_KeyError,
+			"Python mixin profile '%s' is not registered",
+			TCHAR_TO_UTF8(*profile_name.ToString()));
+	}
+
+	if (binding->bMutating || binding->bUnregistering)
+	{
+		return PyErr_Format(PyExc_RuntimeError, "target mixin router is already being modified");
+	}
+	TGuardValue<bool> binding_mutation(binding->bMutating, true);
+	const uint64 registration_id = binding->RegistrationId;
+	const uint64 requested_generation = requested_profile->GenerationId;
+	const TWeakObjectPtr<UObject> object_key(target);
+	FMixinInstanceState* state = &binding->InstanceStates.FindOrAdd(object_key);
+	if (IsInstanceStateBusy(*state))
+	{
+		SetBusyStateError(TEXT("change"), target);
+		return nullptr;
+	}
+	if (state->ActiveGenerationId != 0 && state->ActiveGenerationId != requested_generation)
+	{
+		if (!TeardownActiveProfile(registration_id, target))
+		{
+			return nullptr;
+		}
+	}
+	binding = FindBindingById(registration_id);
+	state = binding ? &binding->InstanceStates.FindOrAdd(object_key) : nullptr;
+	if (!state)
+	{
+		return PyErr_Format(PyExc_RuntimeError, "target mixin state disappeared while changing profiles");
+	}
+	state->ExplicitProfile = profile_name;
+	Py_RETURN_NONE;
+}
+
+PyObject* py_unreal_engine_clear_mixin_profile(PyObject* self, PyObject* args)
+{
+	PyObject* py_target = nullptr;
+	if (!PyArg_ParseTuple(args, "O:clear_mixin_profile", &py_target))
+	{
+		return nullptr;
+	}
+	if (!IsInGameThread())
+	{
+		return PyErr_Format(PyExc_RuntimeError, "clear_mixin_profile must run on Unreal's game thread");
+	}
+	if (!EnsureMixinRegistryMutationAllowed("clear_mixin_profile"))
+	{
+		return nullptr;
+	}
+	FScopedMixinMutation mutation_scope;
+	UObject* target = PythonObjectAsUObject(py_target);
+	if (!target)
+	{
+		return PyErr_Format(PyExc_TypeError, "clear_mixin_profile target must be a UObject instance");
+	}
+	FMixinBinding* binding = FindBindingForClass(target->GetClass());
+	if (!binding)
+	{
+		return PyErr_Format(PyExc_RuntimeError, "target object has no active mixin router");
+	}
+
+	if (binding->bMutating || binding->bUnregistering)
+	{
+		return PyErr_Format(PyExc_RuntimeError, "target mixin router is already being modified");
+	}
+	TGuardValue<bool> binding_mutation(binding->bMutating, true);
+	const uint64 registration_id = binding->RegistrationId;
+	const TWeakObjectPtr<UObject> object_key(target);
+	FMixinInstanceState* state = &binding->InstanceStates.FindOrAdd(object_key);
+	if (IsInstanceStateBusy(*state))
+	{
+		SetBusyStateError(TEXT("clear"), target);
+		return nullptr;
+	}
+	if (state->ActiveGenerationId != 0)
+	{
+		if (!TeardownActiveProfile(registration_id, target))
+		{
+			return nullptr;
+		}
+	}
+	binding = FindBindingById(registration_id);
+	state = binding ? &binding->InstanceStates.FindOrAdd(object_key) : nullptr;
+	if (!state)
+	{
+		return PyErr_Format(PyExc_RuntimeError, "target mixin state disappeared while clearing its profile");
+	}
+	state->ExplicitProfile = NAME_None;
+	Py_RETURN_NONE;
+}
+
+PyObject* py_unreal_engine_get_mixin_profile(PyObject* self, PyObject* args)
+{
+	PyObject* py_target = nullptr;
+	if (!PyArg_ParseTuple(args, "O:get_mixin_profile", &py_target))
+	{
+		return nullptr;
+	}
+	if (!IsInGameThread())
+	{
+		return PyErr_Format(PyExc_RuntimeError, "get_mixin_profile must run on Unreal's game thread");
+	}
+	UObject* target = PythonObjectAsUObject(py_target);
+	if (!target)
+	{
+		return PyErr_Format(PyExc_TypeError, "get_mixin_profile target must be a UObject instance");
+	}
+	FMixinBinding* binding = FindBindingForClass(target->GetClass());
+	if (!binding)
+	{
+		return PyErr_Format(PyExc_RuntimeError, "target object has no active mixin router");
+	}
+	const TWeakObjectPtr<UObject> object_key(target);
+	FName profile_name = NAME_None;
+	if (!ResolveRequestedProfile(binding->RegistrationId, target, profile_name))
+	{
+		return nullptr;
+	}
+	if (profile_name.IsNone())
+	{
+		Py_RETURN_NONE;
+	}
+	return PyUnicode_FromString(TCHAR_TO_UTF8(*profile_name.ToString()));
+}
+
+PyObject* py_unreal_engine_set_default_mixin_profile(PyObject* self, PyObject* args)
+{
+	PyObject* py_target = nullptr;
+	PyObject* py_profile_name = nullptr;
+	if (!PyArg_ParseTuple(args, "OO:set_default_mixin_profile", &py_target, &py_profile_name))
+	{
+		return nullptr;
+	}
+	if (!IsInGameThread())
+	{
+		return PyErr_Format(PyExc_RuntimeError, "set_default_mixin_profile must run on Unreal's game thread");
+	}
+	if (!EnsureMixinRegistryMutationAllowed("set_default_mixin_profile"))
+	{
+		return nullptr;
+	}
+	FScopedMixinMutation mutation_scope;
+	FName profile_name;
+	if (!PythonObjectAsProfileName(py_profile_name, profile_name))
+	{
+		return nullptr;
+	}
+	UClass* target_class = PythonObjectAsClass(py_target);
+	FMixinBinding* binding = target_class ? FindBindingForClass(target_class) : nullptr;
+	if (!binding || binding->TargetClass != target_class)
+	{
+		return PyErr_Format(PyExc_RuntimeError, "target class has no active mixin router");
+	}
+	if (!FindProfile(binding, profile_name))
+	{
+		return PyErr_Format(PyExc_KeyError, "Python mixin profile '%s' is not registered", TCHAR_TO_UTF8(*profile_name.ToString()));
+	}
+	if (binding->bMutating || binding->bUnregistering)
+	{
+		return PyErr_Format(PyExc_RuntimeError, "target mixin router is already being modified");
+	}
+	TGuardValue<bool> binding_mutation(binding->bMutating, true);
+	const uint64 registration_id = binding->RegistrationId;
+	TArray<TWeakObjectPtr<UObject>> instances_to_reset;
+	for (const TPair<TWeakObjectPtr<UObject>, FMixinInstanceState>& pair : binding->InstanceStates)
+	{
+		const FMixinInstanceState& state = pair.Value;
+		if (!state.ExplicitProfile.IsNone() || state.ActiveGenerationId == 0)
+		{
+			continue;
+		}
+		instances_to_reset.Add(pair.Key);
+	}
+	for (const TWeakObjectPtr<UObject>& object_key : instances_to_reset)
+	{
+		if (UObject* object = object_key.Get())
+		{
+			if (!TeardownActiveProfile(registration_id, object) && PyErr_Occurred())
+			{
+				unreal_engine_py_log_error();
+			}
+		}
+	}
+	binding = FindBindingById(registration_id);
+	if (!binding)
+	{
+		return PyErr_Format(PyExc_RuntimeError, "target mixin router disappeared while changing its default profile");
+	}
+	binding->DefaultProfile = profile_name;
+	Py_RETURN_NONE;
+}
+
+PyObject* py_unreal_engine_register_declared_mixin(PyObject* self, PyObject* args)
+{
+	PyObject* py_target = nullptr;
+	if (!PyArg_ParseTuple(args, "O:register_declared_mixin", &py_target))
+	{
+		return nullptr;
+	}
+	if (!IsInGameThread())
+	{
+		return PyErr_Format(PyExc_RuntimeError, "register_declared_mixin must run on Unreal's game thread");
+	}
+	if (!EnsureMixinRegistryMutationAllowed("register_declared_mixin"))
+	{
+		return nullptr;
+	}
+	FScopedMixinMutation mutation_scope;
+	UClass* target_class = PythonObjectAsClass(py_target);
+	if (!RegisterDeclaredMixinInternal(target_class, true))
+	{
+		return nullptr;
+	}
+	Py_RETURN_NONE;
+}
+
+PyObject* py_unreal_engine_register_loaded_mixin_interfaces(PyObject* self, PyObject* args)
+{
+	if (!PyArg_ParseTuple(args, ":register_loaded_mixin_interfaces"))
+	{
+		return nullptr;
+	}
+	if (!IsInGameThread())
+	{
+		return PyErr_Format(PyExc_RuntimeError, "register_loaded_mixin_interfaces must run on Unreal's game thread");
+	}
+	if (!EnsureMixinRegistryMutationAllowed("register_loaded_mixin_interfaces"))
+	{
+		return nullptr;
+	}
+	FScopedMixinMutation mutation_scope;
+	return PyLong_FromLong(RegisterLoadedMixinInterfacesInternal());
 }
 
 PyObject* py_unreal_engine_unregister_mixin(PyObject* self, PyObject* args)
@@ -849,9 +2181,12 @@ PyObject* py_unreal_engine_unregister_mixin(PyObject* self, PyObject* args)
 	{
 		return PyErr_Format(PyExc_RuntimeError, "unregister_mixin must run on Unreal's game thread");
 	}
-
-	ue_PyUObject* py_target_class = ue_is_pyuobject(py_target);
-	UClass* target_class = py_target_class ? Cast<UClass>(py_target_class->ue_object) : nullptr;
+	if (!EnsureMixinRegistryMutationAllowed("unregister_mixin"))
+	{
+		return nullptr;
+	}
+	FScopedMixinMutation mutation_scope;
+	UClass* target_class = PythonObjectAsClass(py_target);
 	if (!target_class)
 	{
 		return PyErr_Format(PyExc_TypeError, "unregister_mixin target must be a UClass");
@@ -869,6 +2204,11 @@ PyObject* py_unreal_engine_unregister_all_mixins(PyObject* self, PyObject* args)
 	{
 		return PyErr_Format(PyExc_RuntimeError, "unregister_all_mixins must run on Unreal's game thread");
 	}
+	if (!EnsureMixinRegistryMutationAllowed("unregister_all_mixins"))
+	{
+		return nullptr;
+	}
+	FScopedMixinMutation mutation_scope;
 	const int32 count = GMixinsByClass.Num();
 	unreal_engine_python_unregister_all_mixins();
 	return PyLong_FromLong(count);
@@ -896,29 +2236,86 @@ PyObject* py_unreal_engine_get_registered_mixins(PyObject* self, PyObject* args)
 		PyObject* item = PyDict_New();
 		PyObject* target = reinterpret_cast<PyObject*>(ue_get_python_uobject_inc(binding.TargetClass));
 		PyObject* functions = PyList_New(binding.Functions.Num());
-		if (!item || !target || !functions)
+		PyObject* profiles = PyDict_New();
+		if (!item || !target || !functions || !profiles)
 		{
 			Py_XDECREF(item);
 			Py_XDECREF(target);
 			Py_XDECREF(functions);
+			Py_XDECREF(profiles);
 			Py_DECREF(result);
 			return nullptr;
 		}
+
 		for (int32 index = 0; index < binding.Functions.Num(); ++index)
 		{
 			PyList_SET_ITEM(functions, index, PyUnicode_FromString(TCHAR_TO_UTF8(*binding.Functions[index].PublicName.ToString())));
 		}
+		for (const TPair<FName, TUniquePtr<FMixinProfileBinding>>& profile_pair : binding.Profiles)
+		{
+			const FMixinProfileBinding& profile = *profile_pair.Value;
+			PyObject* profile_item = PyDict_New();
+			PyObject* profile_functions = PyList_New(profile.Callables.Num());
+			if (!profile_item || !profile_functions)
+			{
+				Py_XDECREF(profile_item);
+				Py_XDECREF(profile_functions);
+				Py_DECREF(item);
+				Py_DECREF(target);
+				Py_DECREF(functions);
+				Py_DECREF(profiles);
+				Py_DECREF(result);
+				return nullptr;
+			}
+			int32 function_index = 0;
+			for (const TPair<FName, PyObject*>& callable : profile.Callables)
+			{
+				PyList_SET_ITEM(profile_functions, function_index++, PyUnicode_FromString(TCHAR_TO_UTF8(*callable.Key.ToString())));
+			}
+			PyObject* generation_id = PyLong_FromUnsignedLongLong(profile.GenerationId);
+			PyDict_SetItemString(profile_item, "python_class", profile.PythonClass);
+			PyDict_SetItemString(profile_item, "functions", profile_functions);
+			if (generation_id)
+			{
+				PyDict_SetItemString(profile_item, "generation_id", generation_id);
+				Py_DECREF(generation_id);
+			}
+			PyDict_SetItemString(profiles, TCHAR_TO_UTF8(*profile_pair.Key.ToString()), profile_item);
+			Py_DECREF(profile_functions);
+			Py_DECREF(profile_item);
+		}
+
 		PyDict_SetItemString(item, "target_class", target);
-		PyDict_SetItemString(item, "python_class", binding.PythonClass);
 		PyDict_SetItemString(item, "functions", functions);
+		PyDict_SetItemString(item, "profiles", profiles);
+		PyObject* default_profile = PyUnicode_FromString(TCHAR_TO_UTF8(*binding.DefaultProfile.ToString()));
 		PyObject* registration_id = PyLong_FromUnsignedLongLong(binding.RegistrationId);
+		if (default_profile)
+		{
+			PyDict_SetItemString(item, "default_profile", default_profile);
+			Py_DECREF(default_profile);
+		}
 		if (registration_id)
 		{
 			PyDict_SetItemString(item, "registration_id", registration_id);
 			Py_DECREF(registration_id);
 		}
+		if (const TUniquePtr<FMixinProfileBinding>* default_binding = binding.Profiles.Find(binding.DefaultProfile))
+		{
+			PyDict_SetItemString(item, "python_class", (*default_binding)->PythonClass);
+		}
+		if (binding.DeclaredSet.IsValid())
+		{
+			PyObject* declared_set = reinterpret_cast<PyObject*>(ue_get_python_uobject_inc(binding.DeclaredSet.Get()));
+			if (declared_set)
+			{
+				PyDict_SetItemString(item, "mixin_set", declared_set);
+				Py_DECREF(declared_set);
+			}
+		}
 		Py_DECREF(target);
 		Py_DECREF(functions);
+		Py_DECREF(profiles);
 		PyList_Append(result, item);
 		Py_DECREF(item);
 	}
@@ -954,14 +2351,46 @@ PyObject* py_ue_call_mixin_original(ue_PyUObject* self, PyObject* args, PyObject
 	{
 		return nullptr;
 	}
-	PyObject* result = py_ue_ufunction_call(
-		function_binding->OriginalFunction,
-		self->ue_object,
-		forwarded_args,
-		0,
-		kwargs);
+	PyObject* result = nullptr;
+	{
+		FUEPyScopedMixinCallback callback_scope;
+		result = py_ue_ufunction_call(
+			function_binding->OriginalFunction,
+			self->ue_object,
+			forwarded_args,
+			0,
+			kwargs);
+	}
 	Py_DECREF(forwarded_args);
 	return result;
+}
+
+void unreal_engine_python_enable_mixin_discovery()
+{
+	if (IsRunningCookCommandlet())
+	{
+		return;
+	}
+	if (!GMixinPackageLoadedHandle.IsValid())
+	{
+		GMixinPackageLoadedHandle = FCoreUObjectDelegates::OnPackageLoadCompleted.AddStatic(&OnMixinPackageLoadCompleted);
+	}
+	if (Py_IsInitialized() && !FUEPyScopedMixinCallback::IsActive() && GMixinMutationDepth == 0)
+	{
+		FScopePythonGIL gil;
+		FScopedMixinMutation mutation_scope;
+		RegisterLoadedMixinInterfacesInternal();
+	}
+}
+
+void unreal_engine_python_disable_mixin_discovery()
+{
+	if (GMixinPackageLoadedHandle.IsValid())
+	{
+		FCoreUObjectDelegates::OnPackageLoadCompleted.Remove(GMixinPackageLoadedHandle);
+		GMixinPackageLoadedHandle.Reset();
+	}
+	GDeclaringClasses.Empty();
 }
 
 void unreal_engine_python_unregister_all_mixins()

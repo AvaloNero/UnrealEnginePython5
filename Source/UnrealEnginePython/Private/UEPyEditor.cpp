@@ -1,4 +1,5 @@
 #include "UEPyEditor.h"
+#include "PythonMixin.h"
 
 #if WITH_EDITOR
 
@@ -14,6 +15,9 @@
 #include "PlayInEditorDataTypes.h"
 #include "FbxMeshUtils.h"
 #include "Kismet2/BlueprintEditorUtils.h"
+#include "EdGraphSchema_K2.h"
+#include "K2Node_FunctionResult.h"
+#include "K2Node_VariableGet.h"
 #include "Editor/LevelEditor/Public/LevelEditorActions.h"
 #include "Editor/UnrealEd/Public/EditorLevelUtils.h"
 #include "ObjectTools.h"
@@ -1796,6 +1800,249 @@ PyObject *py_unreal_engine_blueprint_add_function(PyObject * self, PyObject * ar
 	FBlueprintEditorUtils::AddFunctionGraph<UClass>(bp, graph, true, nullptr);
 
 	Py_RETURN_UOBJECT(graph);
+}
+
+PyObject *py_unreal_engine_blueprint_configure_mixin(PyObject * self, PyObject * args)
+{
+	PyObject *py_blueprint = nullptr;
+	PyObject *py_mixin_set = nullptr;
+	PyObject *py_profile = Py_None;
+	PyObject *py_profile_variable = Py_None;
+	if (!PyArg_ParseTuple(
+		args,
+		"OO|OO:blueprint_configure_mixin",
+		&py_blueprint,
+		&py_mixin_set,
+		&py_profile,
+		&py_profile_variable))
+	{
+		return nullptr;
+	}
+
+	UBlueprint *blueprint = ue_py_check_type<UBlueprint>(py_blueprint);
+	if (!blueprint)
+	{
+		return PyErr_Format(PyExc_TypeError, "first argument is not a UBlueprint");
+	}
+	UUEPPythonMixinSet *mixin_set = ue_py_check_type<UUEPPythonMixinSet>(py_mixin_set);
+	if (!mixin_set)
+	{
+		return PyErr_Format(PyExc_TypeError, "second argument is not a UEPPythonMixinSet");
+	}
+
+	FName profile_name = NAME_None;
+	if (py_profile != Py_None)
+	{
+		if (!PyUnicodeOrString_Check(py_profile))
+		{
+			return PyErr_Format(PyExc_TypeError, "profile must be a string or None");
+		}
+		const char *profile_utf8 = UEPyUnicode_AsUTF8(py_profile);
+		if (!profile_utf8)
+		{
+			return nullptr;
+		}
+		profile_name = FName(UTF8_TO_TCHAR(profile_utf8));
+	}
+	FName profile_variable_name = NAME_None;
+	if (py_profile_variable != Py_None)
+	{
+		if (!PyUnicodeOrString_Check(py_profile_variable))
+		{
+			return PyErr_Format(PyExc_TypeError, "profile_variable must be a string or None");
+		}
+		const char *profile_variable_utf8 = UEPyUnicode_AsUTF8(py_profile_variable);
+		if (!profile_variable_utf8)
+		{
+			return nullptr;
+		}
+		profile_variable_name = FName(UTF8_TO_TCHAR(profile_variable_utf8));
+		if (profile_variable_name.IsNone())
+		{
+			return PyErr_Format(PyExc_ValueError, "profile_variable cannot be empty");
+		}
+	}
+
+	UClass *interface_class = UUEPPythonMixinInterface::StaticClass();
+	bool directly_implemented = false;
+	for (const FBPInterfaceDescription& description : blueprint->ImplementedInterfaces)
+	{
+		if (description.Interface == interface_class)
+		{
+			directly_implemented = true;
+			break;
+		}
+	}
+	if (!directly_implemented &&
+		!FBlueprintEditorUtils::ImplementNewInterface(blueprint, interface_class->GetClassPathName()))
+	{
+		return PyErr_Format(PyExc_RuntimeError, "unable to add UEPPythonMixinInterface to Blueprint");
+	}
+
+	if (!profile_variable_name.IsNone())
+	{
+		const int32 variable_index = FBlueprintEditorUtils::FindNewVariableIndex(
+			blueprint,
+			profile_variable_name);
+		if (variable_index == INDEX_NONE)
+		{
+			FEdGraphPinType profile_pin;
+			profile_pin.PinCategory = UEdGraphSchema_K2::PC_Name;
+			if (!FBlueprintEditorUtils::AddMemberVariable(
+				blueprint,
+				profile_variable_name,
+				profile_pin,
+				profile_name.ToString()))
+			{
+				return PyErr_Format(
+					PyExc_RuntimeError,
+					"unable to add Blueprint mixin profile variable %s",
+					TCHAR_TO_UTF8(*profile_variable_name.ToString()));
+			}
+		}
+		else
+		{
+			FBPVariableDescription& variable = blueprint->NewVariables[variable_index];
+			const bool is_name = variable.VarType.PinCategory == UEdGraphSchema_K2::PC_Name;
+#if UEP_LEGACY_ENGINE_MINOR_VERSION >= 17
+			const bool is_scalar = variable.VarType.ContainerType == EPinContainerType::None;
+#else
+			const bool is_scalar = !variable.VarType.bIsArray;
+#endif
+			if (!is_name || !is_scalar)
+			{
+				return PyErr_Format(
+					PyExc_TypeError,
+					"Blueprint mixin profile variable %s must be a scalar Name",
+					TCHAR_TO_UTF8(*profile_variable_name.ToString()));
+			}
+			variable.DefaultValue = profile_name.ToString();
+		}
+
+		FBlueprintEditorUtils::SetBlueprintOnlyEditableFlag(
+			blueprint,
+			profile_variable_name,
+			false);
+		FBlueprintEditorUtils::SetBlueprintVariableCategory(
+			blueprint,
+			profile_variable_name,
+			nullptr,
+			FText::FromString(TEXT("Python Mixin")));
+		FBlueprintEditorUtils::SetBlueprintVariableMetaData(
+			blueprint,
+			profile_variable_name,
+			nullptr,
+			FName(TEXT("tooltip")),
+			TEXT("Python mixin profile selected independently for this Blueprint instance."));
+	}
+
+	TArray<UEdGraph*> interface_graphs;
+	FBlueprintEditorUtils::GetInterfaceGraphs(
+		blueprint,
+		interface_class->GetClassPathName(),
+		interface_graphs);
+	bool configured_set = false;
+	bool configured_profile = false;
+	for (UEdGraph *graph : interface_graphs)
+	{
+		if (!graph)
+		{
+			continue;
+		}
+		UK2Node_FunctionResult *result_node = nullptr;
+		for (UEdGraphNode *node : graph->Nodes)
+		{
+			result_node = Cast<UK2Node_FunctionResult>(node);
+			if (result_node)
+			{
+				break;
+			}
+		}
+		if (!result_node)
+		{
+			continue;
+		}
+		UEdGraphPin *return_pin = result_node->FindPin(UEdGraphSchema_K2::PN_ReturnValue);
+		if (!return_pin)
+		{
+			continue;
+		}
+
+		const UEdGraphSchema *schema = graph->GetSchema();
+		if (!schema)
+		{
+			continue;
+		}
+		if (graph->GetFName() == FName(TEXT("GetPythonMixinSet")))
+		{
+			schema->TrySetDefaultObject(*return_pin, mixin_set);
+			configured_set = return_pin->DefaultObject == mixin_set;
+		}
+		else if (graph->GetFName() == FName(TEXT("GetPythonMixinProfile")))
+		{
+			if (profile_variable_name.IsNone())
+			{
+				if (!return_pin->LinkedTo.IsEmpty())
+				{
+					return PyErr_Format(
+						PyExc_RuntimeError,
+						"GetPythonMixinProfile is already wired; pass its existing profile variable name");
+				}
+				schema->TrySetDefaultValue(*return_pin, profile_name.ToString());
+				configured_profile = FName(*return_pin->DefaultValue) == profile_name;
+			}
+			else
+			{
+				UK2Node_VariableGet *profile_getter = nullptr;
+				for (UEdGraphPin *linked_pin : return_pin->LinkedTo)
+				{
+					UK2Node_VariableGet *candidate = linked_pin
+						? Cast<UK2Node_VariableGet>(linked_pin->GetOwningNode())
+						: nullptr;
+					if (candidate &&
+						candidate->VariableReference.GetMemberName() == profile_variable_name)
+					{
+						profile_getter = candidate;
+						break;
+					}
+				}
+				if (!profile_getter && !return_pin->LinkedTo.IsEmpty())
+				{
+					return PyErr_Format(
+						PyExc_RuntimeError,
+						"GetPythonMixinProfile is already wired to a different Blueprint expression");
+				}
+
+				const UEdGraphSchema_K2 *k2_schema = Cast<UEdGraphSchema_K2>(schema);
+				if (!profile_getter && k2_schema)
+				{
+					profile_getter = k2_schema->SpawnVariableGetNode(
+						FVector2D(result_node->NodePosX - 240.0f, result_node->NodePosY),
+						graph,
+						profile_variable_name,
+						nullptr);
+				}
+				UEdGraphPin *value_pin = profile_getter ? profile_getter->GetValuePin() : nullptr;
+				if (value_pin &&
+					(return_pin->LinkedTo.Contains(value_pin) ||
+					 schema->TryCreateConnection(value_pin, return_pin)))
+				{
+					configured_profile = true;
+				}
+			}
+		}
+	}
+
+	if (!configured_set || !configured_profile)
+	{
+		return PyErr_Format(
+			PyExc_RuntimeError,
+			"unable to configure UEPPythonMixinInterface result pins (set=%d, profile=%d)",
+			configured_set ? 1 : 0,
+			configured_profile ? 1 : 0);
+	}
+	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(blueprint);
+	Py_RETURN_NONE;
 }
 
 PyObject *py_unreal_engine_blueprint_add_event_dispatcher(PyObject * self, PyObject * args)

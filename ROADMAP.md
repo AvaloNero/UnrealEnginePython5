@@ -204,36 +204,55 @@ Security picker.
 
 ## 0.7.0 — Blueprint mixins and retained-class Third Person
 
-Status: source implementation and headless Standalone acceptance complete;
-Win64 Cook/package and visible-client acceptance pending.
+Status: source implementation, asset generation, headless Standalone and Win64
+Cook/package acceptance complete; visible-client acceptance pending.
 
 - Add `register_mixin`, `mixin`, `unregister_mixin` and registry inspection for
   Blueprint-generated classes.
+- Add one class router with CDO-declared Mixin Sets, mutually exclusive named
+  profiles and cached per-instance profile selection through a Blueprint
+  Interface or explicit Python API.
 - Replace selected Blueprint `UFunction` map entries while keeping every object
   and asset on its original Unreal class.
+- Automatically call the preserved Blueprint implementation when an active
+  profile omits one function from the router union.
 - Preserve an explicit `call_mixin_original` path, per-UObject Python state and
   helper methods without retaining bound-method reference cycles.
 - Restore every original function on explicit unregister, reload and process
   shutdown.
-- Add a Third Person Mixin variant in which the official Blueprint input graph
-  calls Python `Move`/`Aim`, while Blueprint/native jump and AnimBP continue to
-  run unchanged.
+- Discover directly declared Interface owners from package completion in Editor,
+  Game and packaged builds; inherited Blueprint children share the parent router.
+- Reject registry mutation during selector/initializer/teardown/dispatch
+  callbacks while allowing nested initialization of a different object.
+- Preserve native return values and const-reference inputs by copying between
+  the injected and preserved UFunction's native parameter layouts before direct
+  original dispatch.
+- Add a Third Person Mixin variant in which two instances of the official
+  Character BP select different profiles, including one whose missing `Move`
+  falls back to Blueprint, while native jump and AnimBP remain unchanged.
 
-Acceptance gate: a live `BP_ThirdPersonCharacter_C` must move/look through
-Python without changing class, call its original BeginPlay, retain Blueprint
-jump/animation, survive unregister/re-register on the same pawn, restore the
-original Blueprint Move implementation and pass clean Standalone/package
-automation. The Engine and official template assets remain unchanged.
+Acceptance gate: two live `BP_ThirdPersonCharacter_C` objects must retain the
+same class while selecting different profiles; the player must move/look
+through Python, move through automatic Blueprint fallback after a profile
+switch, call its original BeginPlay, retain Blueprint jump/animation, survive
+unregister/re-register on the same pawn and restore the original Blueprint Move
+implementation. The installed Engine/template remains unchanged; the examples
+repository intentionally owns a same-path Character BP copy containing only the
+Mixin Interface configuration in addition to Epic's gameplay graphs.
 
-Current evidence: result `20260829-225225` compiles `UEPyMixin.cpp`, links the
-UE5.8 Editor plugin and passes the schema-1 headless Standalone contract on
-CPython 3.11.8 with zero fatal/assert/`Log*: Error` diagnostics. It records the
-unchanged three `BP_*_C` types, `359.791` units of Python movement, Blueprint
-movement after live restoration, a new live registration generation, invalid-
-signature rejection without loss of the active generation, and two init/
-teardown generations. Template audit `20260829-225525` and Python-first
-regression `20260829-225336` also pass. Package and visible-client evidence is
-not yet recorded for 0.7.
+Current evidence: repeat-generation result `20260831-012003` and schema-4
+headless Standalone result `20260831-012054` compile/link on UE 5.8.0 with
+CPython 3.11.8. The playable Character declares
+`DA_ThirdPersonCharacterMixin`, reads its instance-editable
+`PythonMixinProfile` variable, and passes same-BP selection, Blueprint fallback,
+direct and declared re-registration, full restoration, package-load fixture,
+native const-array/return and callback-reentry gates. Win64 Package result
+`20260831-014230` builds the Game target, cooks/stages/archives and passes the
+same contract in the packaged runtime. Its Cook log proves commandlet bootstrap
+is skipped and no routed function map is serialized into assets.
+Template audit `20260829-225525` and Python-first regression `20260829-225336`
+also pass. Strict package/build/runtime logs are clean. Visible-client evidence
+is not yet recorded for this tree.
 
 ## 0.8.0 — Lyra Python HUD foundation
 
