@@ -256,14 +256,22 @@ is not yet recorded for this tree.
 
 ## 0.8.0 — Lyra Python HUD foundation
 
-Status: planned after 0.7.0 acceptance.
+Status: automated acceptance complete on 2026-09-03. A visible manual client
+was intentionally not launched during the headless release run.
 
 - Reuse the proven HUD/session lifecycle while preserving Lyra's `ALyraHUD`,
   Game Feature activation and CommonUI ownership.
 - Replace the visible health-bar behavior with a Python presenter bound to
   Lyra's Health Component events.
-- Prove replicated `100 -> 90 -> 100`, respawn, travel, deactivation and zero
-  dedicated-server widget creation.
+- Prove replicated `100 -> 90 -> 100`, respawn, Experience-owned `Add Widgets`
+  teardown/recreation, repeated travel and zero dedicated-server widget
+  creation.
+
+Acceptance result `20260903-033426` passed the complete `All` lane on UE 5.8.0
+and CPython 3.11.8 with `full_acceptance: true`. Standalone, network client and
+packaged game each recorded 3 Constructs / 2 Destructs and balanced final
+delegates; the dedicated server recorded zero HUD state. BuildCookRun and the
+packaged runtime exited 0 with matching executable hashes and clean strict logs.
 
 ## 0.9.0 — Lyra combat HUD and API hardening
 

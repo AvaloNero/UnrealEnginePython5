@@ -2,14 +2,24 @@
 
 ## Release-validated platform
 
-UnrealEnginePython 0.5.0 is release-validated on Win64 with Unreal Engine 5.8.0
+UnrealEnginePython 0.8.0 is release-validated on Win64 with Unreal Engine 5.8.0
 and the engine-bundled CPython 3.11.8. The core gate compiles Editor and Game
 plugin targets, runs shared and UEP-owned interpreters, runs full editor tests,
 cooks a Development package and executes the packaged game. The Lyra gate adds
 strict content readiness, Standalone gameplay, synchronized dedicated-
 server/client authority and replication, full Win64 BuildCookRun and packaged
 Experience/Pawn/Input/ASC/Health validation plus the bounded Python-driven GAS
-damage, authority rejection, replication and restoration slice.
+damage, authority rejection, replication and restoration slice. The 0.8 gate
+also validates the retained-class Python Healthbar presenter across Pawn
+replacement, Experience-owned widget action teardown/recreation, repeated
+travel and dedicated-server zero-UI behavior.
+
+Formal 0.8 result `20260903-033426` passed the complete `All` lane with
+`full_acceptance: true`. Standalone, the synchronized client and the packaged
+game each observed Health `100 -> 90 -> 100`, 3 widget Constructs and 2
+Destructs with balanced delegates; the dedicated server created no HUD state.
+BuildCookRun and packaged runtime exited 0, strict logs passed, and archived and
+stable tested executable hashes matched.
 
 The final generic Win64 result `20260812-043408` passed 70/70 shared,
 standalone, exception-boundary, Editor/Slate and packaged-runtime checks; its
@@ -59,5 +69,5 @@ Recheck without changing the SDK:
 
 Use `-Strict` in CI when missing readiness must return a failure code.
 
-Mac, LinuxArm64, Android and console platforms have no 0.5.0 release-level
+Mac, LinuxArm64, Android and console platforms have no 0.8.0 release-level
 runtime result and are not included in the support claim.

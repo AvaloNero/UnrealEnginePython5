@@ -3,6 +3,70 @@
 This file records the UE5 port maintained in this repository. The historical
 UE4 project history remains available in Git.
 
+## [0.8.0] - 2026-09-03
+
+### Added
+
+- A Lyra health-bar presenter on the existing `W_Healthbar_C` class using the
+  0.7 retained-class Mixin router and a BP-declared `UEPPythonMixinSet`.
+- Event-driven Python ownership of widget Construct/Destruct, current-Pawn
+  rebinding, `ULyraHealthComponent.OnHealthChanged`/`OnMaxHealthChanged`,
+  normalized health and refresh timing.
+- A `BlueprintFallback` health-bar profile that executes the preserved
+  Blueprint Construct for per-instance rollback without changing type.
+- Clean-base staged authoring for the same-path health-bar copy and
+  `DA_LyraHealthbarMixin`, plus a read-only audit of Lyra's health bar, default/
+  shooter layouts and Shooter HUD action set.
+- Machine-readable HUD counters/events for registration, construction,
+  destruction, delegate balance, presentation, Pawn replacement, travel,
+  Experience-owned Game Feature action replacement and dedicated-server
+  zero-UI evidence.
+- A headless staged asset-registry prime step whose cache files and byte counts
+  are retained in full-content validation summaries.
+- Seven host-side presenter/bootstrap contract tests for source-only asset
+  absence, exact delegate identity, event-driven rendering, Pawn replacement,
+  Blueprint fallback, Destruct and registry teardown.
+
+### Changed
+
+- The Lyra overlay now stages complete Content rather than Scripts alone, while
+  the reference `F:\LyraStarterGame` and Unreal Engine trees remain unchanged.
+- The 0.5 `100 -> 90 -> 100` authority/replication sequence now waits for the
+  Python health bar to observe both real Health Component events.
+- Runtime commandlets skip Lyra HUD/bootstrap registration so transient routed
+  functions cannot be serialized into cooked assets.
+- The optional HUD bootstrap now treats an absent content-backed Healthbar as
+  unavailable instead of aborting the source-only probe, and HUD audit now
+  verifies the exact Interface, selector, Mixin profiles, reflected state and
+  ShooterCore `Add Widgets` shape consumed by the presenter.
+- Full Lyra acceptance now requires both the gameplay slice and Python HUD
+  lifecycle slice; focused `-SkipHUDSlice` remains available for diagnostics.
+
+### Supported boundaries
+
+- Lyra still owns `ALyraHUD`, Experience/Game Feature activation, CommonUI
+  layout/widget creation, GAS authority, Gameplay Effects and replication.
+  Python owns health presentation only and reuses Blueprint visual primitives.
+- 0.8 does not include QuickBar, weapon/ammo, reticle, team score, elimination
+  feed, accolade presentation or a general Gameplay Message subscription API.
+  Those remain 0.9 work.
+
+### Validation
+
+- Clean-base generation results `20260903-033001` and `20260903-033049` both
+  produced `W_Healthbar_C` with the `Python` default, two profiles and
+  `PythonMixinProfile`; the reference widget remained SHA-256
+  `7AD30080E82AF2BB2FB40DD132F632A35E3429076ABAD49A37FDFD657895CF66`.
+- HUD audit result `20260903-032632` identifies the real
+  `LAS_ShooterGame_StandardHUD` action set: one `GameFeatureAction_AddWidgets`
+  with 1 layout and 11 widget entries.
+- Formal `All` result `20260903-033426` passed UE 5.8.0 / CPython 3.11.8 with
+  `full_acceptance: true`. Standalone, network client and packaged game each
+  observed Health `100 -> 90 -> 100`, Pawn replacement, 3 Constructs, 2
+  Destructs and balanced final callbacks; the dedicated server created zero HUD
+  state. BuildCookRun exited 0, strict logs passed, and archived/tested
+  executable SHA-256 values matched.
+
 ## [0.7.0] - 2026-08-29
 
 ### Added

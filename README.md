@@ -3,20 +3,22 @@
 
 ## Unreal Engine 5.8 port
 
-**Current version: 0.7.0**
+**Current version: 0.8.0**
 
-Version 0.7.0 adds Blueprint-class Python mixins. One class router can host
-multiple named Python profiles, choose one per UObject instance without changing
-its Unreal class, automatically fall back to a preserved Blueprint function
-when the active profile does not implement it, and restore the class map during
-reload or shutdown. The new Third Person variant keeps the official Character,
- PlayerController, GameMode, input EventGraph and AnimBP while demonstrating
- per-instance Python/Blueprint movement profiles, the collectible loop and HUD.
- The router is hardened against callback-driven registry reentry, discovers
- directly declared Interface owners after package load in non-Editor builds and
- performs automatic original fallback on the native parameter frame.
-See [`docs/Mixin_API.md`](docs/Mixin_API.md) and
-[`docs/Third_Person_Mixin_Demo_0.7.0.md`](docs/Third_Person_Mixin_Demo_0.7.0.md).
+Version 0.8.0 applies the retained-class Mixin system to Lyra's existing
+`W_Healthbar_C`. Lyra's Game Feature and CommonUI lifecycle still create the
+same widget class, while an event-driven Python presenter owns Construct/
+Destruct, current-Pawn rebinding, Health Component subscriptions,
+normalization and refresh timing. The original Blueprint retains its visual
+material/animation primitives, Lyra GAS retains authority and replication, and
+dedicated servers create no presenter or widget state. See
+[`docs/Lyra_Python_HUD_0.8.0.md`](docs/Lyra_Python_HUD_0.8.0.md).
+
+The 0.7 Blueprint-class Mixin API remains the foundation: one class router can
+host multiple named profiles, choose one per UObject instance without changing
+its Unreal class, fall back to a preserved Blueprint function, and restore the
+class map during reload or shutdown. See [`docs/Mixin_API.md`](docs/Mixin_API.md)
+and [`docs/Third_Person_Mixin_Demo_0.7.0.md`](docs/Third_Person_Mixin_Demo_0.7.0.md).
 
 The release retains the genuinely Python-driven Lyra gameplay slice introduced
 in 0.5.0 and the hardened UE5 runtime binding beneath both examples. It targets **Unreal
@@ -26,7 +28,7 @@ Windows/Win64 remains the release-validated platform; a Linux lane is provided
 but is not a support claim until it produces a green UE5.8 build/runtime
 artifact.
 
-### 0.7.0 support target
+### 0.8.0 support target
 
 The release target includes:
 
@@ -68,9 +70,28 @@ The release target includes:
   dispatching Lyra's native SetByCaller Damage/Heal Gameplay Effects;
 * machine-readable proof that a client cannot write, the server applies exactly
   one damage command, the client observes replicated health, and a Python-timed
-  heal restores the value on both peers; and
+  heal restores the value on both peers;
+* an unchanged-class Lyra health-bar presenter driven by possession and Health
+  Component delegates, with balanced cleanup across respawn, Experience-owned
+  Game Feature action replacement, repeated travel, widget destruction and
+  Python exit;
+* machine-readable proof that Standalone/network clients render
+  `100 -> 90 -> 100` while the dedicated server creates zero HUD instances; and
 * deterministic Git source archives, checksums and optional UE5.8 `BuildPlugin`
   binary artifacts.
+
+Formal Lyra 0.8 `All` result `20260903-033426` reports
+`full_acceptance: true` on UE 5.8.0 and CPython 3.11.8. Standalone, the loopback
+dedicated-server/client pair and the packaged game all rendered the real
+`100 -> 90 -> 100` health sequence; each UI role recorded 3 Constructs and 2
+Destructs after Pawn replacement and two Experience lifecycles, while the
+dedicated server recorded zero HUD construction. BuildCookRun exited 0, the
+archived and stable tested executable hashes both equal
+`07618B6071C837E1334E4F9FEE2212ACC6A604FD881EEB94419C19AD9DA8F3E9`, and the
+strict build/Cook/runtime gates passed. Clean-base generation results
+`20260903-033001` and `20260903-033049` produced the same two-profile semantic
+configuration without changing the reference Healthbar; HUD audit result
+`20260903-032632` confirms the owning `Add Widgets` action.
 
 Repeat-generation result `20260831-012003` and schema-4 headless Mixin
 Standalone result `20260831-012054` pass on UE 5.8.0 and engine CPython 3.11.8.
@@ -118,6 +139,7 @@ server/client pair, Win64 BuildCookRun and the packaged game with UEP-owned
 CPython 3.11.8. It requires graceful shutdown and zero compiler, fatal/assert or
 `Log*: Error` diagnostics. See
 [`docs/Lyra_Gameplay_Slice_0.5.0.md`](docs/Lyra_Gameplay_Slice_0.5.0.md),
+[`docs/Lyra_Python_HUD_0.8.0.md`](docs/Lyra_Python_HUD_0.8.0.md),
 [`docs/Lyra_Integration_0.4.0.md`](docs/Lyra_Integration_0.4.0.md), and
 [`Demos/UEPLyraIntegration/README.md`](Demos/UEPLyraIntegration/README.md).
 
@@ -128,12 +150,10 @@ reference for the full acceptance lane encoded in
 [`Validation/Run-UEP58LyraValidation.ps1`](Validation/Run-UEP58LyraValidation.ps1).
 Its `All` mode stages an isolated copy, then runs Standalone, explicitly
 synchronized dedicated-server/client, cook/package and packaged-runtime checks.
-The latest full package evidence is result `20260812-234501`. The subsequent
-unambiguous-target hardening is covered by exact-source Network result
-`20260813-005436` and Standalone result `20260813-005835`; no package was
-rebuilt after that small change.
+The latest full package evidence is the 0.8 result `20260903-033426`; the older
+0.5 target-selection results remain historical evidence for that bounded bridge.
 
-### Known 0.7.0 boundaries
+### Known 0.8.0 boundaries
 
 Release-level runtime validation remains Win64-only. The local UE5.8 install
 reports that the Linux `v26_clang-20.1.8-rockylinux8` SDK is unavailable, so
@@ -155,13 +175,15 @@ and events. RPCs, latent calls, delegate signatures, non-const output/reference
  inside selector/initializer/teardown and dispatch callback boundaries.
  Unregister a router before intentionally changing its Blueprint function
  signatures in the editor.
-The 0.7 Mixin Win64 Cook/package gate passes; the visible-client manual gate
-remains pending as noted above.
+The 0.7 Mixin Win64 Cook/package gate passes; its visible-client manual gate
+remains pending as noted above. Lyra 0.8 intentionally replaces only health-bar
+presentation. Combat HUD surfaces and a reusable Gameplay Message subscription
+API remain 0.9.0 work.
 
 To use this source release, place the plugin under a UE 5.8 project's `Plugins`
 directory, regenerate project files, and build it with that UE 5.8 installation.
 The remainder of this README is preserved upstream documentation and may
-describe legacy UE4 or external-Python behavior outside the 0.7.0 support
+describe legacy UE4 or external-Python behavior outside the 0.8.0 support
 contract above.
 
 ## Original upstream documentation

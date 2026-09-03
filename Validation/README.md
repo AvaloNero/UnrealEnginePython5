@@ -219,6 +219,13 @@ The driver first invokes strict readiness and refuses to create its disposable
 stage unless all required assets/maps and root GameFeatureData assets exist. It
 then copies the project to marker-protected
 `.build/LyraValidation/Full/Stage/Lyra`, injects UEP and `UEPLyraBridge`, and
+overlays the example-owned `W_Healthbar` Mixin declaration. It never writes the
+overlay to the reference project. The `GenerateHUDAssets` lane resets its
+stage to the official health bar, hashes that reference before/after staged
+authoring and copies back only the two declared overlay assets; `HUDAudit`
+inventories the relevant Healthbar/layout/action-set assets without changing
+them. Generated Unreal package metadata is not byte-stable, so the gate checks
+the declared Interface/Profile semantics and runtime behavior. The driver
 disables the unrelated desktop `AndroidFileServer` only in that disposable
 stage. After compiling the complete Editor target, it disables the test-only
 `ShooterTests` and `RuntimeTests` roots for gameplay/package execution so the
@@ -229,20 +236,33 @@ on a localized Windows culture those engine tests otherwise emit false
 `LogAutomationTest: Error` diagnostics. The strict runtime error gate is not
 relaxed. The driver runs these gates without changing the reference project:
 
-1. warning/error-free `LyraEditor` build;
+1. seven fast host-side presenter/bootstrap tests under the engine-bundled
+   CPython 3.11, including the source-only missing-asset path, followed by a
+   warning/error-free `LyraEditor` build;
 2. real `L_Expanse` Standalone Experience with active `ShooterCore`, registered
    content-only `ShooterMaps`, local pawn, PlayerState, Enhanced Input, ASC and
    Health, followed by Python-driven GAS damage, duplicate rejection and
-   restoration;
+   restoration. Lyra's existing `W_Healthbar_C` remains CommonUI-owned while a
+   Python mixin presenter observes the real `100 -> 90 -> 100` delegate events;
 3. a dedicated server/client pair proving remote connection, server authority,
    client `AutonomousProxy`, replicated PlayerState and ASC on both roles. Client
    Python first proves `RejectedNotAuthority`; server Python then applies 10
    damage, client Python observes replicated Health 90, server Python restores
    only after that acknowledgement, and client Python observes Health 100. Both
    processes wait behind a shared release signal until both completed markers
-   have been observed; and
+   have been observed. The client must also pass Pawn replacement, an
+   Experience-owned `Add Widgets` action teardown/recreation, and a second
+   travel cleanup/reconstruction, while the dedicated server records zero HUD
+   creation or subscriptions; and
 4. Win64 BuildCookRun followed by the same `100 -> 90 -> 100` gameplay contract
-   in `LyraGame.exe` with UEP-owned CPython 3.11.
+   and Python HUD lifecycle in `LyraGame.exe` with UEP-owned CPython 3.11.
+
+A new full-content stage has no cached asset registry. Before launching a game
+or two Editor-based network peers, the driver runs one headless Editor
+commandlet to complete the initial scan and persist its discovery/sharded
+caches. Runtime processes consume that cache read-only. This avoids an uncached
+multi-process startup stall before the client services the handshake, and the
+summary records every cache path and byte count.
 
 Per-run logs and JSON remain under `Results/<timestamp>`, while the package is
 archived directly to the marker-protected fixed path
@@ -269,10 +289,11 @@ Both direct UBT and BuildCookRun's UBT child default to two non-UBA actions via
 `-MaxParallelActions`; override the script parameter only on a host with enough
 memory.
 
-`Readiness`, `Standalone`, `Network` and `Package` modes run narrower diagnostic
-lanes. The gameplay slice is enabled by default; `-SkipGameplaySlice` exists for
-back-compat diagnostics, but only `All` with the slice enabled can set
-`full_acceptance: true`. `-GameplaySliceDamage` accepts 0.01 through 25 and
+`Readiness`, `HUDAudit`, `GenerateHUDAssets`, `Standalone`, `Network` and
+`Package` modes run narrower diagnostic lanes. The gameplay and HUD slices are
+enabled by default in runtime modes; `-SkipGameplaySlice` and `-SkipHUDSlice`
+exist for focused/back-compat diagnostics, but only `All` with both enabled can
+set `full_acceptance: true`. `-GameplaySliceDamage` accepts 0.01 through 25 and
 defaults to the release value 10. Negative result
 `20260811-184148` correctly reports `blocked` with 11 missing-content reasons
 and no staging project for the local Git sample.
@@ -305,8 +326,22 @@ After the target selector was hardened to reject more than one matching human
 controller, exact-source Network result `20260813-005436` rebuilt only
 `UEPLyraBridge` and passed both roles; Standalone result `20260813-005835` was
 up to date and passed the local sequence. No Cook/package was repeated after
-that hardening, so `20260812-234501` remains the latest package-level result and
-the two 2026-08-13 results are the latest exact-source runtime evidence.
+that hardening; these remain historical 0.5 evidence.
+
+For 0.8, clean-base generation results `20260903-033001` and
+`20260903-033049` passed the same two-profile semantic postconditions while the
+reference Healthbar hash stayed unchanged. Read-only HUD audit result
+`20260903-032632` confirms that `LAS_ShooterGame_StandardHUD` contains one
+`GameFeatureAction_AddWidgets` with 1 layout and 11 widget entries. Formal
+`All` result `20260903-033426` reports `full_acceptance: true`: host tests,
+readiness, Editor build, asset-registry prime, Standalone, synchronized network,
+Win64 BuildCookRun and packaged runtime all exited 0. Every UI role recorded the
+real Health `100 -> 90 -> 100`, Pawn replacement, 3 Constructs / 2 Destructs
+and balanced delegates after two Experience lifecycles; the dedicated server
+recorded zero HUD state. The archived and stable tested executable hashes match,
+and all strict logs passed.
 
 The full ownership and rejection contract is documented in
 [`../docs/Lyra_Gameplay_Slice_0.5.0.md`](../docs/Lyra_Gameplay_Slice_0.5.0.md).
+The 0.8 widget ownership, Mixin routing and lifecycle contract is documented in
+[`../docs/Lyra_Python_HUD_0.8.0.md`](../docs/Lyra_Python_HUD_0.8.0.md).

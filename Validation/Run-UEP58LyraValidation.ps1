@@ -3,7 +3,7 @@ param(
     [string]$EngineRoot = "F:\UnrealEngine",
     [string]$LyraProject,
     [string]$OutputRoot,
-    [ValidateSet("Readiness", "Standalone", "Network", "Package", "All")]
+    [ValidateSet("Readiness", "HUDAudit", "GenerateHUDAssets", "Standalone", "Network", "Package", "All")]
     [string]$Mode = "All",
     [string]$GameplayMap = "/ShooterMaps/Maps/L_Expanse",
     [string]$ExpectedExperience = "B_ShooterGame_Elimination",
@@ -18,6 +18,7 @@ param(
     [ValidateRange(0.01, 25.0)]
     [double]$GameplaySliceDamage = 10.0,
     [switch]$SkipGameplaySlice,
+    [switch]$SkipHUDSlice,
     [switch]$Incremental
 )
 
@@ -317,6 +318,128 @@ function Assert-AutomationLog {
     }
 }
 
+function Assert-LyraHUDAudit {
+    param(
+        [Parameter(Mandatory = $true)][string]$ResultPath,
+        [Parameter(Mandatory = $true)][string]$UnrealLogPath
+    )
+    if (!(Test-Path -LiteralPath $ResultPath -PathType Leaf)) {
+        throw "Lyra HUD audit result was not created: $ResultPath"
+    }
+    if (!(Test-Path -LiteralPath $UnrealLogPath -PathType Leaf)) {
+        throw "Lyra HUD audit log was not created: $UnrealLogPath"
+    }
+
+    $report = Get-Content -LiteralPath $ResultPath -Raw | ConvertFrom-Json
+    if ($report.schema_version -ne 1 -or
+        $report.status -ne "passed" -or
+        $report.engine_version[0] -ne 5 -or
+        $report.engine_version[1] -ne 8) {
+        throw "Lyra HUD audit failed its status/engine contract: $ResultPath"
+    }
+
+    $expectedBlueprints = @(
+        @{ role = "healthbar"; path = "/Game/UI/Hud/W_Healthbar" },
+        @{ role = "default_hud_layout"; path = "/Game/UI/Hud/W_DefaultHUDLayout" },
+        @{ role = "shooter_hud_layout"; path = "/ShooterCore/UserInterface/W_ShooterHUDLayout" }
+    )
+    foreach ($expected in $expectedBlueprints) {
+        $matches = @($report.widget_blueprints | Where-Object {
+            $_.role -eq $expected.role -and $_.path -eq $expected.path
+        })
+        if ($matches.Count -ne 1 -or
+            !([string]$matches[0].generated_class) -or
+            @($matches[0].graphs).Count -le 0) {
+            throw "Lyra HUD audit lacks '$($expected.role)' Blueprint evidence: $ResultPath"
+        }
+    }
+    $healthbar = @($report.widget_blueprints | Where-Object role -eq "healthbar")[0]
+    foreach ($propertyName in @(
+        "HealthNumber",
+        "NormalizedHealth",
+        "HealthOldValue",
+        "HealthNewValue",
+        "BarFillMID",
+        "PythonMixinProfile"
+    )) {
+        if (@($healthbar.reflected_properties) -notcontains $propertyName) {
+            throw "Lyra HUD audit healthbar lacks property '$propertyName': $ResultPath"
+        }
+    }
+    foreach ($functionName in @(
+        "Construct",
+        "InitializeBarVisuals",
+        "SetDynamicMaterials",
+        "GetPythonMixinSet",
+        "GetPythonMixinProfile"
+    )) {
+        if (@($healthbar.reflected_functions) -notcontains $functionName) {
+            throw "Lyra HUD audit healthbar lacks function '$functionName': $ResultPath"
+        }
+    }
+    $mixin = $healthbar.mixin
+    if (@($mixin.implemented_interfaces) -notcontains "UEPPythonMixinInterface" -or
+        $mixin.mixin_set_path -ne "/Game/UEPMixins/DA_LyraHealthbarMixin.DA_LyraHealthbarMixin" -or
+        $mixin.mixin_set_class -ne "UEPPythonMixinSet" -or
+        $mixin.selected_profile -ne "Python" -or
+        $mixin.default_profile -ne "Python") {
+        throw "Lyra HUD audit healthbar Mixin declaration is inconsistent: $ResultPath"
+    }
+    $expectedMixinProfiles = @(
+        @{
+            profile_name = "Python"
+            python_module = "uep_lyra_hud.healthbar_mixin"
+            python_class = "LyraHealthbarPythonProfile"
+        },
+        @{
+            profile_name = "BlueprintFallback"
+            python_module = "uep_lyra_hud.healthbar_mixin"
+            python_class = "LyraHealthbarBlueprintFallbackProfile"
+        }
+    )
+    if (@($mixin.profiles).Count -ne $expectedMixinProfiles.Count) {
+        throw "Lyra HUD audit healthbar Mixin profile count is inconsistent: $ResultPath"
+    }
+    foreach ($expectedProfile in $expectedMixinProfiles) {
+        $profiles = @($mixin.profiles | Where-Object {
+            $_.profile_name -eq $expectedProfile.profile_name -and
+            $_.python_module -eq $expectedProfile.python_module -and
+            $_.python_class -eq $expectedProfile.python_class
+        })
+        if ($profiles.Count -ne 1) {
+            throw "Lyra HUD audit lacks Mixin profile '$($expectedProfile.profile_name)': $ResultPath"
+        }
+    }
+    $actionSet = @($report.data_assets | Where-Object {
+        $_.role -eq "shooter_hud_action_set" -and
+        $_.path -eq "/ShooterCore/Experiences/LAS_ShooterGame_StandardHUD"
+    })
+    if ($actionSet.Count -ne 1 -or
+        $actionSet[0].asset_class -ne "LyraExperienceActionSet" -or
+        $actionSet[0].action_count -ne 1 -or
+        @($actionSet[0].game_features_to_enable) -notcontains "ShooterCore") {
+        throw "Lyra HUD audit lacks the Shooter HUD action-set evidence: $ResultPath"
+    }
+    $addWidgetsActions = @($actionSet[0].actions | Where-Object {
+        $_.class -eq "GameFeatureAction_AddWidgets" -and
+        $_.layout_entry_count -eq 1 -and
+        $_.widget_entry_count -eq 11
+    })
+    if ($addWidgetsActions.Count -ne 1) {
+        throw "Lyra HUD audit Shooter action set lacks the expected Add Widgets layout: $ResultPath"
+    }
+
+    $logContents = Get-Content -LiteralPath $UnrealLogPath -Raw
+    if (!$logContents.Contains("UEP_LYRA_HUD_AUDIT_PASSED") -or
+        $logContents.Contains("UEP_LYRA_HUD_AUDIT_FAILED") -or
+        $logContents.Contains("Fatal error:") -or
+        $logContents.Contains("Assertion failed:") -or
+        $logContents.Contains("Unhandled Exception:")) {
+        throw "Lyra HUD audit log failed its contract: $UnrealLogPath"
+    }
+    return $report
+}
+
 function Assert-LyraRuntime {
     param(
         [Parameter(Mandatory = $true)][string]$ResultPath,
@@ -326,6 +449,7 @@ function Assert-LyraRuntime {
         [Parameter(Mandatory = $true)][string[]]$ExpectedRegisteredFeatures,
         [string]$ExpectedExperienceContains = "",
         [switch]$ExpectGameplaySlice,
+        [switch]$ExpectHUDSlice,
         [double]$ExpectedGameplayDamage = 10.0
     )
     if (!(Test-Path -LiteralPath $ResultPath -PathType Leaf)) {
@@ -402,6 +526,64 @@ function Assert-LyraRuntime {
         }
     }
 
+    if ($ExpectHUDSlice) {
+        if ($report.schema_version -lt 3 -or
+            !$report.PSObject.Properties["hud"] -or
+            !$report.PSObject.Properties["hud_lifecycle"]) {
+            throw "Lyra $ExpectedMode report lacks 0.8 Python HUD evidence: $ResultPath"
+        }
+        $hud = $report.hud
+        if (!$hud.registered -or !$hud.source_asset_available -or @($hud.errors).Count -ne 0 -or
+            !$report.hud_lifecycle.enabled -or !$report.hud_lifecycle.completed) {
+            throw "Lyra $ExpectedMode Python HUD registration/lifecycle failed: $ResultPath"
+        }
+        $hudLifecycle = $report.hud_lifecycle
+        if (!$hudLifecycle.respawn.requested -or !$hudLifecycle.respawn.observed -or
+            !$hudLifecycle.game_feature.deactivated -or !$hudLifecycle.game_feature.reactivated -or
+            [int]$hudLifecycle.game_feature.bridge_generation_after -le [int]$hudLifecycle.game_feature.bridge_generation_before -or
+            !$hudLifecycle.travel.requested -or !$hudLifecycle.travel.observed -or
+            [int]$hudLifecycle.travel.bridge_generation_after -le [int]$hudLifecycle.travel.bridge_generation_before) {
+            throw "Lyra $ExpectedMode lacks respawn/GameFeature/travel HUD evidence: $ResultPath"
+        }
+        if ($ExpectedMode -in @("server", "server_exit")) {
+            if ([int]$hud.active_widget_count -ne 0 -or
+                [int]$hud.construct_count -ne 0 -or
+                [int]$hud.controller_bind_count -ne 0 -or
+                [int]$hud.health_bind_count -ne 0 -or
+                @($hud.health_events).Count -ne 0) {
+                throw "Lyra $ExpectedMode created dedicated-server HUD state: $ResultPath"
+            }
+        }
+        else {
+            if ([int]$hud.active_widget_count -lt 1 -or
+                [int]$hud.construct_count -lt 3 -or
+                [int]$hud.destruct_count -lt 2 -or
+                ([int]$hud.controller_bind_count - [int]$hud.controller_unbind_count) -ne [int]$hud.active_widget_count -or
+                ([int]$hud.health_bind_count - [int]$hud.health_unbind_count) -ne [int]$hud.active_widget_count) {
+                throw "Lyra $ExpectedMode Python HUD delegate balance failed: $ResultPath"
+            }
+            $finalHealthEvents = @($hud.health_events | Where-Object {
+                [math]::Abs([double]$_.health - [double]$report.snapshot.health) -le 0.05
+            })
+            if ($finalHealthEvents.Count -lt 1) {
+                throw "Lyra $ExpectedMode Python HUD did not render final health: $ResultPath"
+            }
+            if ($ExpectGameplaySlice) {
+                $damagedEvents = @($hud.health_events | Where-Object {
+                    $_.event -eq "health_changed" -and
+                    [math]::Abs([double]$_.health - [double]$report.gameplay_slice.expected_damaged_health) -le 0.05
+                })
+                $restoredEvents = @($hud.health_events | Where-Object {
+                    $_.event -eq "health_changed" -and
+                    [math]::Abs([double]$_.health - [double]$report.gameplay_slice.baseline_health) -le 0.05
+                })
+                if ($damagedEvents.Count -lt 1 -or $restoredEvents.Count -lt 1) {
+                    throw "Lyra $ExpectedMode Python HUD lacks 100-90-100 event evidence: $ResultPath"
+                }
+            }
+        }
+    }
+
     $logContents = Get-Content -LiteralPath $UnrealLogPath -Raw
     $requiredLogMarkers = [System.Collections.Generic.List[string]]::new()
     $requiredLogMarkers.AddRange([string[]]@(
@@ -415,6 +597,21 @@ function Assert-LyraRuntime {
     ))
     if ($ExpectGameplaySlice) {
         $requiredLogMarkers.Add("UEP_LYRA_GAMEPLAY_SLICE_PASSED")
+    }
+    if ($ExpectHUDSlice) {
+        $requiredLogMarkers.Add("UEP_LYRA_HUD_INTERFACE_REGISTERED")
+        $requiredLogMarkers.Add("UEP_LYRA_PYTHON_HUD_PASSED")
+        $requiredLogMarkers.Add("UEP_LYRA_HUD_RESPAWN_PASSED")
+        $requiredLogMarkers.Add("UEP_LYRA_HUD_GAME_FEATURE_CYCLE_PASSED")
+        $requiredLogMarkers.Add("UEP_LYRA_HUD_TRAVEL_PASSED")
+        $requiredLogMarkers.Add("UEP_LYRA_HUD_LIFECYCLE_PROBE_PASSED")
+        if ($ExpectedMode -notin @("server", "server_exit")) {
+            $requiredLogMarkers.Add("UEP_LYRA_PYTHON_HEALTHBAR_CONSTRUCTED")
+            $requiredLogMarkers.Add("UEP_LYRA_HUD_HEALTH")
+        }
+        elseif ($logContents.Contains("UEP_LYRA_PYTHON_HEALTHBAR_CONSTRUCTED")) {
+            throw "Lyra $ExpectedMode log shows a dedicated-server HUD instance: $UnrealLogPath"
+        }
     }
     foreach ($marker in $requiredLogMarkers) {
         if (!$logContents.Contains($marker)) {
@@ -442,6 +639,8 @@ function Get-LyraRuntimeArguments {
         [int]$HoldReadySeconds = 0,
         [string]$ReadyReleaseFile = "",
         [switch]$GameplaySlice,
+        [switch]$HUDSlice,
+        [string]$HUDTravelURL = "",
         [string]$GameplaySyncDir = "",
         [double]$GameplayDamage = 10.0
     )
@@ -483,8 +682,14 @@ function Get-LyraRuntimeArguments {
     if ($GameplaySlice) {
         $arguments.Add("-UEPLyraGameplaySlice")
         $arguments.Add("-UEPLyraGameplayDamage=$GameplayDamage")
-        if ($GameplaySyncDir) {
-            $arguments.Add("-UEPLyraGameplaySyncDir=$GameplaySyncDir")
+    }
+    if ($GameplaySyncDir) {
+        $arguments.Add("-UEPLyraGameplaySyncDir=$GameplaySyncDir")
+    }
+    if ($HUDSlice) {
+        $arguments.Add("-UEPLyraHUDSlice")
+        if ($HUDTravelURL) {
+            $arguments.Add("-UEPLyraHUDTravelURL=$HUDTravelURL")
         }
     }
     return $arguments.ToArray()
@@ -517,12 +722,13 @@ $stageRoot = Join-Path $outputRootPath "Stage\Lyra"
 $stageMarkerPath = Join-Path $stageRoot ".uep-lyra-full-stage.json"
 $packageRoot = Join-Path $outputRootPath "Package"
 $packageMarkerPath = Join-Path $packageRoot ".uep-lyra-full-package.json"
-$gameplaySliceEnabled = !$SkipGameplaySlice.IsPresent -and $Mode -ne "Readiness"
+$gameplaySliceEnabled = !$SkipGameplaySlice.IsPresent -and $Mode -notin @("Readiness", "HUDAudit", "GenerateHUDAssets")
+$hudSliceEnabled = !$SkipHUDSlice.IsPresent -and $Mode -notin @("Readiness", "HUDAudit", "GenerateHUDAssets")
 $gameplayRuntimeMap = if ($gameplaySliceEnabled) { "${GameplayMap}?NumBots=3" } else { $GameplayMap }
 New-Item -ItemType Directory -Path $resultRoot -Force | Out-Null
 
 $summary = [ordered]@{
-    schema_version = 2
+    schema_version = 3
     status = "failed"
     run_id = $runId
     mode = $Mode
@@ -533,9 +739,14 @@ $summary = [ordered]@{
     stage_runtime_disabled_plugins = @()
     gameplay_slice_enabled = $gameplaySliceEnabled
     gameplay_slice_damage = if ($gameplaySliceEnabled) { $GameplaySliceDamage } else { $null }
+    hud_slice_enabled = $hudSliceEnabled
     package_output_root = if ($Mode -in @("Package", "All")) { $packageRoot } else { $null }
     readiness = $null
+    hud_host_tests = $null
     editor_build = $null
+    asset_registry_prime = $null
+    hud_audit = $null
+    hud_asset_generation = $null
     standalone = $null
     network = $null
     package = $null
@@ -569,6 +780,19 @@ try {
     if ($summary.python -notlike "3.11.*") {
         throw "Full Lyra validation requires engine-bundled CPython 3.11"
     }
+
+    $hudHostTestsRoot = Join-Path $repoRoot "Demos\UEPLyraIntegration\Tests"
+    $hudHostTestsLog = Join-Path $resultRoot "hud-host-tests.log"
+    if (!(Test-Path -LiteralPath $hudHostTestsRoot -PathType Container)) {
+        throw "Lyra HUD host tests were not found: $hudHostTestsRoot"
+    }
+    $summary.hud_host_tests = Invoke-LoggedProcess `
+        -FilePath $pythonPath `
+        -ArgumentList @("-B", "-m", "unittest", "discover", "-s", $hudHostTestsRoot, "-p", "test_*.py", "-v") `
+        -WorkingDirectory $repoRoot `
+        -LogPath $hudHostTestsLog `
+        -Label "Lyra HUD presenter host tests" `
+        -TimeoutSeconds 60
 
     $readinessRoot = Join-Path $resultRoot "Readiness"
     $readinessLog = Join-Path $resultRoot "readiness.log"
@@ -658,7 +882,28 @@ try {
         Copy-FilteredTree -Source (Join-Path $repoRoot "Demos\UEPLyraIntegration\Plugins\UEPLyraBridge") -Destination $stagedBridge -ExcludedSegments @(
             "Binaries", "Intermediate", "__pycache__"
         ) -PruneDestination
-        Copy-FilteredTree -Source (Join-Path $repoRoot "Demos\UEPLyraIntegration\Overlay\Content\Scripts") -Destination (Join-Path $stageRoot "Content\Scripts") -ExcludedSegments @("__pycache__")
+        $lyraOverlayContent = Join-Path $repoRoot "Demos\UEPLyraIntegration\Overlay\Content"
+        $stagedContent = Join-Path $stageRoot "Content"
+        if ($Mode -eq "GenerateHUDAssets") {
+            # Asset authoring must always begin from the unchanged Lyra asset,
+            # not from a previously generated overlay retained by an
+            # incremental stage. Only Scripts are needed while the commandlet
+            # creates the two overlay-owned assets below.
+            Copy-FilteredTree -Source (Join-Path $lyraOverlayContent "Scripts") -Destination (Join-Path $stagedContent "Scripts") -ExcludedSegments @("__pycache__")
+            $referenceHealthbar = Join-Path $lyraRoot "Content\UI\Hud\W_Healthbar.uasset"
+            $stagedHealthbar = Join-Path $stagedContent "UI\Hud\W_Healthbar.uasset"
+            $stagedMixinAsset = Join-Path $stagedContent "UEPMixins\DA_LyraHealthbarMixin.uasset"
+            Assert-PathIsUnder -Path $stagedHealthbar -Parent $stageRoot
+            Assert-PathIsUnder -Path $stagedMixinAsset -Parent $stageRoot
+            New-Item -ItemType Directory -Path (Split-Path -Parent $stagedHealthbar) -Force | Out-Null
+            Copy-Item -LiteralPath $referenceHealthbar -Destination $stagedHealthbar -Force
+            if (Test-Path -LiteralPath $stagedMixinAsset -PathType Leaf) {
+                Remove-Item -LiteralPath $stagedMixinAsset -Force
+            }
+        }
+        else {
+            Copy-FilteredTree -Source $lyraOverlayContent -Destination $stagedContent -ExcludedSegments @("__pycache__")
+        }
 
         $stageProject = Join-Path $stageRoot ([System.IO.Path]::GetFileName($lyraProjectPath))
         $projectDescriptor = Get-Content -LiteralPath $stageProject -Raw | ConvertFrom-Json
@@ -728,15 +973,231 @@ try {
         $projectDescriptor | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $stageProject -Encoding utf8
         $summary.stage_runtime_disabled_plugins = @("AndroidFileServer") + $runtimeDisabledPlugins
 
+        if ($Mode -in @("Standalone", "Network", "Package", "All")) {
+            # A fresh full-content stage has no CachedAssetRegistry. Starting
+            # two Editor -game processes while both perform Lyra's uncached
+            # initial scan can stall the client before it services the network
+            # handshake. Prime one read-only cache in an Editor commandlet;
+            # -Multiprocess runtime processes then share it without writing.
+            $assetRegistryPrimeScript = Join-Path $repoRoot "Demos\UEPLyraIntegration\Tools\prime_asset_registry.py"
+            $assetRegistryPrimeResult = Join-Path $resultRoot "asset-registry-prime.json"
+            $assetRegistryPrimeStdout = Join-Path $resultRoot "asset-registry-prime-stdout.log"
+            $assetRegistryPrimeLog = Join-Path $resultRoot "asset-registry-prime.log"
+            if (!(Test-Path -LiteralPath $assetRegistryPrimeScript -PathType Leaf)) {
+                throw "Lyra asset-registry prime script was not found: $assetRegistryPrimeScript"
+            }
+            $assetRegistryPrimeArguments = @(
+                $stageProject,
+                "-unattended",
+                "-nop4",
+                "-NullRHI",
+                "-NoSound",
+                "-NoSplash",
+                "-culture=en",
+                "-UTF8Output",
+                "-DisablePython",
+                "-DisablePlugins=AndroidFileServer,UdpMessaging,TcpMessaging",
+                # Ordinary commandlets do not search the complete registry at
+                # startup. Force that supported UE path so wait_for_assets
+                # observes real work and the editor gatherer can persist both
+                # caches before this one process exits.
+                "-AssetGatherAll=true",
+                "-AssetRegistryDiscoveryCache=AlwaysWrite",
+                "-notraceserver",
+                "-stdout",
+                "-FullStdOutLogOutput",
+                "-run=Py",
+                $assetRegistryPrimeScript,
+                "-UEPLyraAssetRegistryPrimeResult=$assetRegistryPrimeResult",
+                "-abslog=$assetRegistryPrimeLog"
+            )
+            $assetRegistryPrimeProcess = Invoke-LoggedProcess -FilePath $editorPath -ArgumentList $assetRegistryPrimeArguments -WorkingDirectory $stageRoot -LogPath $assetRegistryPrimeStdout -Label "Prime staged Lyra asset registry" -TimeoutSeconds 600
+            if (!(Test-Path -LiteralPath $assetRegistryPrimeResult -PathType Leaf)) {
+                throw "Lyra asset-registry prime result was not created: $assetRegistryPrimeResult"
+            }
+            $assetRegistryPrimeReport = Get-Content -LiteralPath $assetRegistryPrimeResult -Raw | ConvertFrom-Json
+            if ($assetRegistryPrimeReport.schema_version -ne 1 -or
+                $assetRegistryPrimeReport.status -ne "passed" -or
+                $assetRegistryPrimeReport.engine_version[0] -ne 5 -or
+                $assetRegistryPrimeReport.engine_version[1] -ne 8 -or
+                $assetRegistryPrimeReport.loading_after_wait) {
+                throw "Lyra asset-registry prime report failed its contract: $assetRegistryPrimeResult"
+            }
+            $assetRegistryPrimeLogContents = Get-Content -LiteralPath $assetRegistryPrimeLog -Raw
+            if (!$assetRegistryPrimeLogContents.Contains("UEP_LYRA_ASSET_REGISTRY_PRIME_PASSED") -or
+                $assetRegistryPrimeLogContents.Contains("UEP_LYRA_ASSET_REGISTRY_PRIME_FAILED") -or
+                $assetRegistryPrimeLogContents.Contains("Fatal error:") -or
+                $assetRegistryPrimeLogContents.Contains("Assertion failed:") -or
+                $assetRegistryPrimeLogContents.Contains("Unhandled Exception:")) {
+                throw "Lyra asset-registry prime log failed its contract: $assetRegistryPrimeLog"
+            }
+            $assetRegistryDiscoveryCache = Join-Path $stageRoot "Intermediate\CachedAssetRegistryDiscovery.bin"
+            $assetRegistryCacheRoot = Join-Path $stageRoot "Intermediate\CachedAssetRegistry"
+            $assetRegistryCacheFiles = @(
+                Get-ChildItem -LiteralPath $assetRegistryCacheRoot -Filter "CachedAssetRegistry_*.bin" -File -ErrorAction SilentlyContinue
+            )
+            if (!(Test-Path -LiteralPath $assetRegistryDiscoveryCache -PathType Leaf) -or
+                $assetRegistryCacheFiles.Count -lt 1) {
+                throw "Lyra asset-registry prime did not persist both discovery and asset caches"
+            }
+            $summary.asset_registry_prime = [ordered]@{
+                process = $assetRegistryPrimeProcess
+                report = $assetRegistryPrimeResult
+                unreal_log = $assetRegistryPrimeLog
+                discovery_cache = $assetRegistryDiscoveryCache
+                discovery_cache_bytes = (Get-Item -LiteralPath $assetRegistryDiscoveryCache).Length
+                asset_cache_files = @($assetRegistryCacheFiles | ForEach-Object {
+                    [ordered]@{ path = $_.FullName; bytes = $_.Length }
+                })
+            }
+        }
+
+        if ($Mode -eq "GenerateHUDAssets") {
+            $hudGeneratorScript = Join-Path $repoRoot "Demos\UEPLyraIntegration\Tools\generate_hud_mixin_assets.py"
+            $hudGeneratorResult = Join-Path $resultRoot "hud-mixin-assets.json"
+            $hudGeneratorStdout = Join-Path $resultRoot "hud-mixin-assets-stdout.log"
+            $hudGeneratorLog = Join-Path $resultRoot "hud-mixin-assets.log"
+            if (!(Test-Path -LiteralPath $hudGeneratorScript -PathType Leaf)) {
+                throw "Lyra HUD Mixin asset generator was not found: $hudGeneratorScript"
+            }
+
+            $referenceHealthbar = Join-Path $lyraRoot "Content\UI\Hud\W_Healthbar.uasset"
+            if (!(Test-Path -LiteralPath $referenceHealthbar -PathType Leaf)) {
+                throw "Reference Lyra healthbar was not found: $referenceHealthbar"
+            }
+            $referenceHashBefore = (Get-FileHash -LiteralPath $referenceHealthbar -Algorithm SHA256).Hash
+            $hudGeneratorArguments = @(
+                $stageProject,
+                "-unattended",
+                "-nop4",
+                "-NullRHI",
+                "-NoSound",
+                "-NoSplash",
+                "-culture=en",
+                "-UTF8Output",
+                "-DisablePython",
+                "-DisablePlugins=AndroidFileServer,UdpMessaging,TcpMessaging",
+                "-notraceserver",
+                "-stdout",
+                "-FullStdOutLogOutput",
+                "-run=Py",
+                $hudGeneratorScript,
+                "-UEPGenerateLyraHUDMixinAssetsResult=$hudGeneratorResult",
+                "-abslog=$hudGeneratorLog"
+            )
+            $hudGeneratorProcess = Invoke-LoggedProcess -FilePath $editorPath -ArgumentList $hudGeneratorArguments -WorkingDirectory $stageRoot -LogPath $hudGeneratorStdout -Label "Generate staged Lyra HUD Mixin assets" -TimeoutSeconds 300
+            if (!(Test-Path -LiteralPath $hudGeneratorResult -PathType Leaf)) {
+                throw "Lyra HUD Mixin asset generation result was not created: $hudGeneratorResult"
+            }
+            $hudGeneratorReport = Get-Content -LiteralPath $hudGeneratorResult -Raw | ConvertFrom-Json
+            if ($hudGeneratorReport.schema_version -ne 1 -or
+                $hudGeneratorReport.status -ne "passed" -or
+                $hudGeneratorReport.healthbar.path -ne "/Game/UI/Hud/W_Healthbar" -or
+                $hudGeneratorReport.healthbar.generated_class -ne "W_Healthbar_C" -or
+                $hudGeneratorReport.healthbar.mixin_set -ne "DA_LyraHealthbarMixin" -or
+                $hudGeneratorReport.healthbar.default_profile -ne "Python" -or
+                $hudGeneratorReport.healthbar.profile_count -ne 2 -or
+                $hudGeneratorReport.healthbar.profile_variable -ne "PythonMixinProfile" -or
+                $hudGeneratorReport.healthbar.profile_value -ne "Python") {
+                throw "Lyra HUD Mixin asset generation report failed its contract: $hudGeneratorResult"
+            }
+            $hudGeneratorLogContents = Get-Content -LiteralPath $hudGeneratorLog -Raw
+            if (!$hudGeneratorLogContents.Contains("UEP_LYRA_HUD_MIXIN_ASSET_GENERATION_PASSED") -or
+                $hudGeneratorLogContents.Contains("UEP_LYRA_HUD_MIXIN_ASSET_GENERATION_FAILED") -or
+                $hudGeneratorLogContents.Contains("Fatal error:") -or
+                $hudGeneratorLogContents.Contains("Assertion failed:") -or
+                $hudGeneratorLogContents.Contains("Unhandled Exception:")) {
+                throw "Lyra HUD Mixin asset generation log failed its contract: $hudGeneratorLog"
+            }
+
+            $overlayRoot = Join-Path $repoRoot "Demos\UEPLyraIntegration\Overlay"
+            $assetMappings = @(
+                @{
+                    source = "Content\UI\Hud\W_Healthbar.uasset"
+                    destination = "Content\UI\Hud\W_Healthbar.uasset"
+                },
+                @{
+                    source = "Content\UEPMixins\DA_LyraHealthbarMixin.uasset"
+                    destination = "Content\UEPMixins\DA_LyraHealthbarMixin.uasset"
+                }
+            )
+            $copiedAssets = @()
+            foreach ($assetMapping in $assetMappings) {
+                $sourceAsset = Join-Path $stageRoot $assetMapping.source
+                $destinationAsset = Join-Path $overlayRoot $assetMapping.destination
+                Assert-PathIsUnder -Path $sourceAsset -Parent $stageRoot
+                Assert-PathIsUnder -Path $destinationAsset -Parent $overlayRoot
+                if (!(Test-Path -LiteralPath $sourceAsset -PathType Leaf)) {
+                    throw "Generated Lyra HUD Mixin asset was not found: $sourceAsset"
+                }
+                New-Item -ItemType Directory -Path (Split-Path -Parent $destinationAsset) -Force | Out-Null
+                Copy-Item -LiteralPath $sourceAsset -Destination $destinationAsset -Force
+                $copiedAssets += [ordered]@{
+                    path = $destinationAsset
+                    sha256 = (Get-FileHash -LiteralPath $destinationAsset -Algorithm SHA256).Hash
+                }
+            }
+
+            $referenceHashAfter = (Get-FileHash -LiteralPath $referenceHealthbar -Algorithm SHA256).Hash
+            if ($referenceHashAfter -ne $referenceHashBefore) {
+                throw "Reference Lyra healthbar changed during staged generation: $referenceHealthbar"
+            }
+            $summary.hud_asset_generation = [ordered]@{
+                process = $hudGeneratorProcess
+                report = $hudGeneratorResult
+                unreal_log = $hudGeneratorLog
+                copied_assets = $copiedAssets
+                reference_healthbar = $referenceHealthbar
+                reference_healthbar_sha256 = $referenceHashAfter
+            }
+        }
+
+        if ($Mode -eq "HUDAudit") {
+            $hudAuditScript = Join-Path $repoRoot "Demos\UEPLyraIntegration\Tools\audit_hud.py"
+            $hudAuditResult = Join-Path $resultRoot "hud-audit.json"
+            $hudAuditStdout = Join-Path $resultRoot "hud-audit-stdout.log"
+            $hudAuditLog = Join-Path $resultRoot "hud-audit.log"
+            if (!(Test-Path -LiteralPath $hudAuditScript -PathType Leaf)) {
+                throw "Lyra HUD audit script was not found: $hudAuditScript"
+            }
+            $hudAuditArguments = @(
+                $stageProject,
+                "-unattended",
+                "-nop4",
+                "-NullRHI",
+                "-NoSound",
+                "-NoSplash",
+                "-culture=en",
+                "-UTF8Output",
+                "-DisablePython",
+                "-DisablePlugins=AndroidFileServer,UdpMessaging,TcpMessaging",
+                "-notraceserver",
+                "-stdout",
+                "-FullStdOutLogOutput",
+                "-run=Py",
+                $hudAuditScript,
+                "-UEPLyraHUDAuditResult=$hudAuditResult",
+                "-abslog=$hudAuditLog"
+            )
+            $hudAuditProcess = Invoke-LoggedProcess -FilePath $editorPath -ArgumentList $hudAuditArguments -WorkingDirectory $stageRoot -LogPath $hudAuditStdout -Label "Lyra HUD read-only audit" -TimeoutSeconds 300
+            $hudAuditReport = Assert-LyraHUDAudit -ResultPath $hudAuditResult -UnrealLogPath $hudAuditLog
+            $summary.hud_audit = [ordered]@{
+                process = $hudAuditProcess
+                report = $hudAuditResult
+                unreal_log = $hudAuditLog
+                healthbar = @($hudAuditReport.widget_blueprints | Where-Object role -eq "healthbar")[0]
+            }
+        }
+
         if ($Mode -in @("Standalone", "All")) {
             $standaloneResult = Join-Path $resultRoot "standalone.json"
             $standaloneStdout = Join-Path $resultRoot "standalone-stdout.log"
             $standaloneLog = Join-Path $resultRoot "standalone.log"
             $standaloneArguments = @($stageProject, $gameplayRuntimeMap, "-game") +
-                (Get-LyraRuntimeArguments -TargetMode "standalone" -ResultPath $standaloneResult -UnrealLogPath $standaloneLog -ExpectedControllers 1 -ActiveFeatures $RequiredActiveGameFeatures -RegisteredFeatures $RequiredRegisteredGameFeatures -TimeoutSeconds $RuntimeTimeoutSeconds -Experience $ExpectedExperience -GameplaySlice:$gameplaySliceEnabled -GameplayDamage $GameplaySliceDamage)
+                (Get-LyraRuntimeArguments -TargetMode "standalone" -ResultPath $standaloneResult -UnrealLogPath $standaloneLog -ExpectedControllers 1 -ActiveFeatures $RequiredActiveGameFeatures -RegisteredFeatures $RequiredRegisteredGameFeatures -TimeoutSeconds $RuntimeTimeoutSeconds -Experience $ExpectedExperience -GameplaySlice:$gameplaySliceEnabled -HUDSlice:$hudSliceEnabled -HUDTravelURL $gameplayRuntimeMap -GameplayDamage $GameplaySliceDamage)
             $standaloneProcess = Invoke-LoggedProcess -FilePath $editorPath -ArgumentList $standaloneArguments -WorkingDirectory $stageRoot -LogPath $standaloneStdout -Label "Lyra standalone gameplay" -TimeoutSeconds ($RuntimeTimeoutSeconds + 120)
-            $standaloneReport = Assert-LyraRuntime -ResultPath $standaloneResult -UnrealLogPath $standaloneLog -ExpectedMode "standalone" -ExpectedActiveFeatures $RequiredActiveGameFeatures -ExpectedRegisteredFeatures $RequiredRegisteredGameFeatures -ExpectedExperienceContains $ExpectedExperience -ExpectGameplaySlice:$gameplaySliceEnabled -ExpectedGameplayDamage $GameplaySliceDamage
-            $summary.standalone = [ordered]@{ process = $standaloneProcess; report = $standaloneResult; unreal_log = $standaloneLog; snapshot = $standaloneReport.snapshot; gameplay_slice = $standaloneReport.gameplay_slice }
+            $standaloneReport = Assert-LyraRuntime -ResultPath $standaloneResult -UnrealLogPath $standaloneLog -ExpectedMode "standalone" -ExpectedActiveFeatures $RequiredActiveGameFeatures -ExpectedRegisteredFeatures $RequiredRegisteredGameFeatures -ExpectedExperienceContains $ExpectedExperience -ExpectGameplaySlice:$gameplaySliceEnabled -ExpectHUDSlice:$hudSliceEnabled -ExpectedGameplayDamage $GameplaySliceDamage
+            $summary.standalone = [ordered]@{ process = $standaloneProcess; report = $standaloneResult; unreal_log = $standaloneLog; snapshot = $standaloneReport.snapshot; gameplay_slice = $standaloneReport.gameplay_slice; hud = $standaloneReport.hud; hud_lifecycle = $standaloneReport.hud_lifecycle }
         }
 
         if ($Mode -in @("Network", "All")) {
@@ -753,13 +1214,13 @@ try {
             $clientLog = Join-Path $resultRoot "client.log"
             $networkReleaseFile = Join-Path $resultRoot "network-ready.release"
             $gameplaySyncDir = Join-Path $resultRoot "gameplay-sync"
-            if ($gameplaySliceEnabled) {
+            if ($gameplaySliceEnabled -or $hudSliceEnabled) {
                 New-Item -ItemType Directory -Path $gameplaySyncDir -Force | Out-Null
             }
             $serverArguments = @($stageProject, $gameplayRuntimeMap, "-server", "-port=$ServerPort", "-multihome=127.0.0.1", "-Multiprocess") +
-                (Get-LyraRuntimeArguments -TargetMode "server" -ResultPath $serverResult -UnrealLogPath $serverLog -ExpectedControllers 1 -ActiveFeatures $RequiredActiveGameFeatures -RegisteredFeatures $RequiredRegisteredGameFeatures -TimeoutSeconds $RuntimeTimeoutSeconds -Experience $ExpectedExperience -ReadyReleaseFile $networkReleaseFile -GameplaySlice:$gameplaySliceEnabled -GameplaySyncDir $gameplaySyncDir -GameplayDamage $GameplaySliceDamage)
+                (Get-LyraRuntimeArguments -TargetMode "server" -ResultPath $serverResult -UnrealLogPath $serverLog -ExpectedControllers 1 -ActiveFeatures $RequiredActiveGameFeatures -RegisteredFeatures $RequiredRegisteredGameFeatures -TimeoutSeconds $RuntimeTimeoutSeconds -Experience $ExpectedExperience -ReadyReleaseFile $networkReleaseFile -GameplaySlice:$gameplaySliceEnabled -HUDSlice:$hudSliceEnabled -HUDTravelURL $gameplayRuntimeMap -GameplaySyncDir $gameplaySyncDir -GameplayDamage $GameplaySliceDamage)
             $clientArguments = @($stageProject, "127.0.0.1:$ServerPort", "-game", "-Multiprocess") +
-                (Get-LyraRuntimeArguments -TargetMode "client" -ResultPath $clientResult -UnrealLogPath $clientLog -ExpectedControllers 1 -ActiveFeatures $RequiredActiveGameFeatures -RegisteredFeatures $RequiredRegisteredGameFeatures -TimeoutSeconds $RuntimeTimeoutSeconds -Experience $ExpectedExperience -ReadyReleaseFile $networkReleaseFile -GameplaySlice:$gameplaySliceEnabled -GameplaySyncDir $gameplaySyncDir -GameplayDamage $GameplaySliceDamage)
+                (Get-LyraRuntimeArguments -TargetMode "client" -ResultPath $clientResult -UnrealLogPath $clientLog -ExpectedControllers 1 -ActiveFeatures $RequiredActiveGameFeatures -RegisteredFeatures $RequiredRegisteredGameFeatures -TimeoutSeconds $RuntimeTimeoutSeconds -Experience $ExpectedExperience -ReadyReleaseFile $networkReleaseFile -GameplaySlice:$gameplaySliceEnabled -HUDSlice:$hudSliceEnabled -HUDTravelURL $gameplayRuntimeMap -GameplaySyncDir $gameplaySyncDir -GameplayDamage $GameplaySliceDamage)
             $serverHandle = $null
             $clientHandle = $null
             try {
@@ -777,14 +1238,16 @@ try {
                 Stop-LoggedProcess -Handle $clientHandle
                 Stop-LoggedProcess -Handle $serverHandle
             }
-            $clientReport = Assert-LyraRuntime -ResultPath $clientResult -UnrealLogPath $clientLog -ExpectedMode "client" -ExpectedActiveFeatures $RequiredActiveGameFeatures -ExpectedRegisteredFeatures $RequiredRegisteredGameFeatures -ExpectedExperienceContains $ExpectedExperience -ExpectGameplaySlice:$gameplaySliceEnabled -ExpectedGameplayDamage $GameplaySliceDamage
-            $serverReport = Assert-LyraRuntime -ResultPath $serverResult -UnrealLogPath $serverLog -ExpectedMode "server" -ExpectedActiveFeatures $RequiredActiveGameFeatures -ExpectedRegisteredFeatures $RequiredRegisteredGameFeatures -ExpectedExperienceContains $ExpectedExperience -ExpectGameplaySlice:$gameplaySliceEnabled -ExpectedGameplayDamage $GameplaySliceDamage
+            $clientReport = Assert-LyraRuntime -ResultPath $clientResult -UnrealLogPath $clientLog -ExpectedMode "client" -ExpectedActiveFeatures $RequiredActiveGameFeatures -ExpectedRegisteredFeatures $RequiredRegisteredGameFeatures -ExpectedExperienceContains $ExpectedExperience -ExpectGameplaySlice:$gameplaySliceEnabled -ExpectHUDSlice:$hudSliceEnabled -ExpectedGameplayDamage $GameplaySliceDamage
+            $serverReport = Assert-LyraRuntime -ResultPath $serverResult -UnrealLogPath $serverLog -ExpectedMode "server" -ExpectedActiveFeatures $RequiredActiveGameFeatures -ExpectedRegisteredFeatures $RequiredRegisteredGameFeatures -ExpectedExperienceContains $ExpectedExperience -ExpectGameplaySlice:$gameplaySliceEnabled -ExpectHUDSlice:$hudSliceEnabled -ExpectedGameplayDamage $GameplaySliceDamage
             $summary.network = [ordered]@{
                 port = $ServerPort
                 release_signal = $networkReleaseFile
+                runtime_sync = if ($gameplaySliceEnabled -or $hudSliceEnabled) { $gameplaySyncDir } else { $null }
                 gameplay_sync = if ($gameplaySliceEnabled) { $gameplaySyncDir } else { $null }
-                server = [ordered]@{ process = $serverProcess; report = $serverResult; unreal_log = $serverLog; snapshot = $serverReport.snapshot; gameplay_slice = $serverReport.gameplay_slice }
-                client = [ordered]@{ process = $clientProcess; report = $clientResult; unreal_log = $clientLog; snapshot = $clientReport.snapshot; gameplay_slice = $clientReport.gameplay_slice }
+                hud_sync = if ($hudSliceEnabled) { $gameplaySyncDir } else { $null }
+                server = [ordered]@{ process = $serverProcess; report = $serverResult; unreal_log = $serverLog; snapshot = $serverReport.snapshot; gameplay_slice = $serverReport.gameplay_slice; hud = $serverReport.hud; hud_lifecycle = $serverReport.hud_lifecycle }
+                client = [ordered]@{ process = $clientProcess; report = $clientResult; unreal_log = $clientLog; snapshot = $clientReport.snapshot; gameplay_slice = $clientReport.gameplay_slice; hud = $clientReport.hud; hud_lifecycle = $clientReport.hud_lifecycle }
             }
         }
 
@@ -875,9 +1338,9 @@ try {
                 "-basedir=$(Split-Path -Parent $packagedInternalExecutable)",
                 $gameplayRuntimeMap
             ) +
-                (Get-LyraRuntimeArguments -TargetMode "packaged" -ResultPath $packagedResult -UnrealLogPath $packagedLog -ExpectedControllers 1 -ActiveFeatures $RequiredActiveGameFeatures -RegisteredFeatures $RequiredRegisteredGameFeatures -TimeoutSeconds $RuntimeTimeoutSeconds -Experience $ExpectedExperience -GameplaySlice:$gameplaySliceEnabled -GameplayDamage $GameplaySliceDamage)
+                (Get-LyraRuntimeArguments -TargetMode "packaged" -ResultPath $packagedResult -UnrealLogPath $packagedLog -ExpectedControllers 1 -ActiveFeatures $RequiredActiveGameFeatures -RegisteredFeatures $RequiredRegisteredGameFeatures -TimeoutSeconds $RuntimeTimeoutSeconds -Experience $ExpectedExperience -GameplaySlice:$gameplaySliceEnabled -HUDSlice:$hudSliceEnabled -HUDTravelURL $gameplayRuntimeMap -GameplayDamage $GameplaySliceDamage)
             $packagedRuntime = Invoke-LoggedProcess -FilePath $packagedNetworkExecutable -ArgumentList $packagedArguments -WorkingDirectory $packagedNetworkDirectory -LogPath $packagedStdout -Label "Packaged Lyra gameplay" -TimeoutSeconds ($RuntimeTimeoutSeconds + 120)
-            $packagedReport = Assert-LyraRuntime -ResultPath $packagedResult -UnrealLogPath $packagedLog -ExpectedMode "packaged" -ExpectedActiveFeatures $RequiredActiveGameFeatures -ExpectedRegisteredFeatures $RequiredRegisteredGameFeatures -ExpectedExperienceContains $ExpectedExperience -ExpectGameplaySlice:$gameplaySliceEnabled -ExpectedGameplayDamage $GameplaySliceDamage
+            $packagedReport = Assert-LyraRuntime -ResultPath $packagedResult -UnrealLogPath $packagedLog -ExpectedMode "packaged" -ExpectedActiveFeatures $RequiredActiveGameFeatures -ExpectedRegisteredFeatures $RequiredRegisteredGameFeatures -ExpectedExperienceContains $ExpectedExperience -ExpectGameplaySlice:$gameplaySliceEnabled -ExpectHUDSlice:$hudSliceEnabled -ExpectedGameplayDamage $GameplaySliceDamage
             $summary.package = [ordered]@{
                 process = $packageProcess
                 uat_log = $packageLog
@@ -892,11 +1355,13 @@ try {
                 unreal_log = $packagedLog
                 snapshot = $packagedReport.snapshot
                 gameplay_slice = $packagedReport.gameplay_slice
+                hud = $packagedReport.hud
+                hud_lifecycle = $packagedReport.hud_lifecycle
             }
         }
 
         $summary.status = "passed"
-        $summary.full_acceptance = $Mode -eq "All" -and $gameplaySliceEnabled
+        $summary.full_acceptance = $Mode -eq "All" -and $gameplaySliceEnabled -and $hudSliceEnabled
     }
 }
 catch {
